@@ -851,30 +851,21 @@ perform_systematic_cross_user_check() {
         echo -e "${CYAN}[*] Analyzing file structure for cross-user access...${NC}"
     fi
     
-    # Get all files in current user's directory (excluding certain extensions)
-    local excluded_extensions=(
-        "jpg" "jpeg" "png" "gif" "bmp" "svg" "webp" "ico"
-        "mp4" "avi" "mov" "wmv" "flv" "mkv" "webm" "mp3" "wav" "flac" "aac"
-        "pdf" "doc" "docx" "xls" "xlsx" "ppt" "pptx"
-        "zip" "tar" "gz" "bz2" "xz" "7z" "rar"
-        "exe" "dll" "so" "dylib" "app"
-        "ttf" "otf" "woff" "woff2"
-        "log" "cache" "tmp" "temp"
-    )
-    
-    # Build exclusion pattern for find command
-    local find_exclusions=""
-    for ext in "${excluded_extensions[@]}"; do
-        find_exclusions="$find_exclusions ! -name \"*.$ext\""
-    done
-    
-    # Get relative paths from current user's home
+    # Get relative paths from current user's home (using should_scan_file_fast filtering)
     local temp_file="/tmp/filespectre_user_files_$$"
-    eval "find \"$current_user_home\" -type f -size -10M $find_exclusions 2>/dev/null" | \
-        sed "s|^$current_user_home/||" | \
-        head -1000 > "$temp_file"  # Limit to first 1000 files for performance
     
-    local file_count=$(wc -l < "$temp_file")
+    # Find all files and filter them through should_scan_file_fast function
+    find "$current_user_home" -type f -size -10M 2>/dev/null | while IFS= read -r file; do
+        if should_scan_file_fast "$file"; then
+            # Convert to relative path
+            echo "${file#$current_user_home/}"
+        fi
+    done > "$temp_file" 2>/dev/null || touch "$temp_file"
+    
+    local file_count=0
+    if [[ -f "$temp_file" ]]; then
+        file_count=$(wc -l < "$temp_file" 2>/dev/null || echo "0")
+    fi
     if [[ $file_count -eq 0 ]]; then
         rm -f "$temp_file"
         return
