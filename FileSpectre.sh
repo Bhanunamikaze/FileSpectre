@@ -954,7 +954,7 @@ perform_systematic_cross_user_check() {
                         fi
                     fi
                 fi
-            done < "$temp_file"
+            done < <(cat "$temp_file" 2>/dev/null || true)
             
             # Limit to prevent excessive scanning
             if [[ $checked_users -ge 50 ]]; then
@@ -1007,7 +1007,7 @@ perform_systematic_cross_user_check() {
                         fi
                     fi
                 fi
-            done < <(head -100 "$temp_file")  # Limit to first 100 files for same-base check
+            done < <(head -100 "$temp_file" 2>/dev/null || true)  # Limit to first 100 files for same-base check
             
             if [[ $checked_users -ge 20 ]]; then
                 break
