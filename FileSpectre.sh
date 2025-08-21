@@ -573,7 +573,7 @@ should_scan_file_fast() {
     
     # Skip common binary extensions that are unlikely to have vulnerabilities
     case "$ext" in
-        jpg|jpeg|png|gif|bmp|ico|svg|pdf|mp3|mp4|avi|mkv|xz|deb|rpm|dmg|exe|dll|so|a|o|class)
+        jpg|jpeg|png|gif|bmp|ico|svg|pdf|mp3|mp4|avi|mkv|xz|deb|rpm|dmg|exe|dll|so|a|js|o|class)
             return 1
             ;;
         *)
