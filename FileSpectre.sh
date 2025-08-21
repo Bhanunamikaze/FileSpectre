@@ -1187,7 +1187,9 @@ quiet_log_vulnerability() {
     # Only show CRITICAL and HIGH vulnerabilities in quiet mode
     if [[ $QUIET_MODE -eq 1 ]]; then
         if [[ "$severity" == "CRITICAL" ]] || [[ "$severity" == "HIGH" ]]; then
-            echo -e "  ${RED}[$severity]${NC} ${YELLOW}$vuln_type${NC}: $(basename "$file_path")"
+            # Clear current line and print vulnerability, then allow progress bar to update
+            printf "\033[2K\r"
+            echo -e "  ${RED}[$severity]${NC} ${YELLOW}$vuln_type${NC}: $file_path"
         fi
     else
         # Verbose mode - show all vulnerabilities
@@ -2519,6 +2521,11 @@ deep_scan_directory() {
     local file_count=$(find "$dir" -maxdepth 1 -type f 2>/dev/null | wc -l)
     increment_counter "$TEMP_DIR/total_files" "$file_count"
     
+    # Update per-user file counter if worker ID is available
+    if [[ -n "${WORKER_ID:-}" ]]; then
+        increment_counter "$TEMP_DIR/user_${WORKER_ID}_files_scanned" "$file_count"
+    fi
+    
     # Optimized batch file scanning using find with formatted output
     # This single find command gets all file info at once, dramatically faster
     find "$dir" -maxdepth "$SCAN_DEPTH" -type f -printf '%p|%u|%g|%m|%s\n' 2>/dev/null | while IFS='|' read -r file owner group perms size; do
@@ -2660,6 +2667,13 @@ scan_worker() {
     # Set worker ID for heartbeat tracking
     export WORKER_ID="$worker_id"
     
+    # Update current user being processed by this worker
+    echo "$username" > "$TEMP_DIR/current_user"
+    
+    # Initialize per-user file counters
+    echo "0" > "$TEMP_DIR/user_${worker_id}_files_scanned"
+    echo "0" > "$TEMP_DIR/user_${worker_id}_files_total"
+    
     # Create worker heartbeat file for activity monitoring
     local worker_heartbeat="$TEMP_DIR/worker_${worker_id}_heartbeat"
     echo "$(date +%s)" > "$worker_heartbeat"
@@ -2684,6 +2698,12 @@ scan_worker() {
             echo -e "${CYAN}[Worker-$worker_id] $user_home (Perms: $home_perms)${NC}"
         fi
         
+        # Quick estimate of files in user directory for progress tracking
+        if [[ -d "$user_home" ]]; then
+            local estimated_files=$(find "$user_home" -type f 2>/dev/null | wc -l)
+            echo "$estimated_files" > "$TEMP_DIR/user_${worker_id}_files_total" 2>/dev/null
+        fi
+        
         # Deep scan the home directory
         deep_scan_directory "$user_home" "home"
         
@@ -2699,8 +2719,10 @@ scan_worker() {
     # Mark user as processed
     increment_counter "$TEMP_DIR/processed_users"
     
-    # Clean up worker heartbeat file
+    # Clean up worker files
     rm -f "$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat" 2>/dev/null
+    rm -f "$TEMP_DIR/user_${WORKER_ID:-0}_files_scanned" 2>/dev/null
+    rm -f "$TEMP_DIR/user_${WORKER_ID:-0}_files_total" 2>/dev/null
 }
 
 # Parallel scan manager
@@ -2744,8 +2766,8 @@ parallel_scan() {
         # Track current user being processed
         echo "$username" > "$TEMP_DIR/current_user"
         
-        # Show dashboard in quiet mode
-        if [[ $QUIET_MODE -eq 1 ]] && [[ $((job_count % 10)) -eq 0 ]] && [[ $job_count -gt 5 ]]; then
+        # Show dashboard in quiet mode (update more frequently)
+        if [[ $QUIET_MODE -eq 1 ]] && [[ $((job_count % 3)) -eq 0 ]] && [[ $job_count -gt 1 ]]; then
             # Brief delay to let counters update from background workers
             sleep 0.5
             
@@ -2880,7 +2902,23 @@ parallel_scan() {
                 local current_files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
                 local current_vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
                 local current_user=$(cat "$TEMP_DIR/current_user" 2>/dev/null || echo "...")
-                local files_info="F:$current_files V:$current_vulns U:$current_user"
+                
+                # Try to get per-user progress if available
+                local user_progress=""
+                for worker_file in "$TEMP_DIR"/user_*_files_total; do
+                    if [[ -f "$worker_file" ]]; then
+                        local worker_total=$(cat "$worker_file" 2>/dev/null || echo "0")
+                        local worker_id=$(basename "$worker_file" | sed 's/user_\(.*\)_files_total/\1/')
+                        local worker_scanned=$(cat "$TEMP_DIR/user_${worker_id}_files_scanned" 2>/dev/null || echo "0")
+                        if [[ "$worker_total" -gt 0 ]]; then
+                            local user_percent=$((worker_scanned * 100 / worker_total))
+                            user_progress="($user_percent%)"
+                            break
+                        fi
+                    fi
+                done
+                
+                local files_info="F:$current_files V:$current_vulns U:$current_user$user_progress"
                 
                 show_progress_bar "$processed" "$total_users" "Processing remaining users..." "$files_info"
                 last_progress_update=$current_time
