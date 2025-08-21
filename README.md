@@ -18,6 +18,7 @@
 ### Performance & Scalability
 - **50+ Parallel Workers** - Auto-scaling based on CPU cores for optimal performance
 - **Smart Caching** - User/group/permission lookups cached for 5x speed improvement
+- **User Sampling** - Random, first N, or specific user selection for faster scanning in large environments
 - **Optimized Find Commands** - Uses fastest Unix permission detection methods
 - **File Pre-filtering** - Skips binary files and irrelevant extensions automatically
 - **Memory Efficient** - Handles millions of files with minimal resource usage
@@ -35,7 +36,7 @@
 | **Credentials** | SSH Keys, Database Files, Sensitive Content | Exposed authentication and secrets |
 | **System** | Symlinks, Hard Links, NFS Exports, Service Files | System-level security issues |
 
-### ** Shared Hosting Specialist**
+### **Shared Hosting Specialist**
 - **Multi-Home Detection** - Scans `/home`, `/home1`, `/home2`, `/home3`, `/home4`, etc.
 - **Web Directory Awareness** - Detects `public_html`, `www`, `htdocs`, `html`, `web`
 - **Cross-User Analysis** - Identifies when your user can access other users' files
@@ -43,14 +44,14 @@
 - **WordPress Security** - Specialized detection for `wp-config.php` and WordPress vulnerabilities
 - **Environment File Scanning** - Detects exposed `.env` files with credentials
 
-### ** Professional Reporting**
+### **Professional Reporting**
 - **Multiple Formats** - JSON, CSV, HTML, XML exports
 - **Interactive HTML Reports** - Styled reports with vulnerability breakdown
 - **Real-time Dashboard** - Progress tracking with ETA and performance metrics
 - **Severity Classification** - CRITICAL, HIGH, MEDIUM, LOW with color coding
 - **Integration Ready** - Compatible with `jq`, security tools, and spreadsheets
 
-## 🛠️ **Installation**
+## **Installation**
 
 ```bash
 # Clone the repository
@@ -115,6 +116,24 @@ chmod +x scanner.sh
   --export-format json,csv \
   --output-dir /var/security/reports
 
+# Fast assessment with random 20 users sampling (for environments with many similar users)
+./scanner.sh \
+  --random-users 20 \
+  --threads 50 \
+  --quick \
+  --export-format json,html
+
+# Scan only first 10 users for quick validation
+./scanner.sh \
+  --first-users 10 \
+  --scan-types suid-sgid,world-permissions,config-files
+
+# Scan specific high-risk users only
+./scanner.sh \
+  --specific-users root,admin,webmaster,user1 \
+  --threads 20 \
+  --verbose
+
 # Resume interrupted scan
 ./scanner.sh --resume ./scan_state_20241201_120000
 ```
@@ -146,6 +165,14 @@ chmod +x scanner.sh
 | `--no-content` | Skip content analysis | Performance |
 | `--no-auto-scale` | Fixed thread count | Controlled resources |
 | `--no-progress` | Minimal output | Automation |
+
+### **User Sampling Options**
+| Option | Description | Example |
+|--------|-------------|---------|
+| `--max-users NUM` | Limit scan to maximum NUM users (0 = no limit) | `--max-users 20` |
+| `--random-users [NUM]` | Randomly select users for scanning (default: 10) | `--random-users 15` |
+| `--first-users NUM` | Scan only first NUM users (alphabetically sorted) | `--first-users 5` |
+| `--specific-users USERS` | Scan only specified users (comma-separated) | `--specific-users user1,user2,admin` |
 
 ### **Export Options**
 | Option | Description | Formats |
@@ -237,7 +264,7 @@ chmod +x scanner.sh
    ► XML Report: ./scan_results_20241201_143022/scan_report_20241201_143022.xml
 ```
 
-## 🔧 **Advanced Features**
+##  **Advanced Features**
 
 ### **Cross-User Detection**
 Specifically designed for shared hosting environments:
@@ -248,7 +275,7 @@ Specifically designed for shared hosting environments:
 ./scanner.sh --scan-types config-files --include-paths /home,/home1,/home2,/home3
 ```
 
-### ** Systematic Structure Detection**
+### **Systematic Structure Detection**
 **Revolutionary feature that mirrors your entire file structure to detect cross-user access:**
 
 ```bash
