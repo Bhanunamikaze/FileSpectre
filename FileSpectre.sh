@@ -36,6 +36,12 @@ SCAN_TYPES=("all")
 RESUME_FILE=""
 ENABLE_RESUME=0
 
+# User sampling configuration
+MAX_USERS=0           # 0 = no limit, N = max N users
+RANDOM_USERS=0        # 0 = disabled, 1 = enable random sampling
+FIRST_USERS=0         # 0 = disabled, N = first N users only
+SPECIFIC_USERS=()     # Array of specific usernames to scan
+
 # Temporary files for parallel processing
 TEMP_DIR="/tmp/vuln_scan_$$"
 RESULTS_FILE="$TEMP_DIR/results.txt"
@@ -3124,7 +3130,79 @@ discover_all_users() {
         fi
     done
     
-    printf '%s\n' "${users[@]}" | sort -u
+    # Apply user sampling if configured
+    local final_users=()
+    
+    # Handle specific users selection first
+    if [[ ${#SPECIFIC_USERS[@]} -gt 0 ]]; then
+        echo -e "${YELLOW}[*] Using specific users: ${SPECIFIC_USERS[*]}${NC}" >&2
+        for specific_user in "${SPECIFIC_USERS[@]}"; do
+            # Find the user in discovered users
+            for user_entry in "${users[@]}"; do
+                local username="${user_entry%%:*}"
+                if [[ "$username" == "$specific_user" ]]; then
+                    final_users+=("$user_entry")
+                    break
+                fi
+            done
+        done
+    else
+        # Sort users for consistent ordering
+        local sorted_users=()
+        while IFS= read -r user_entry; do
+            sorted_users+=("$user_entry")
+        done < <(printf '%s\n' "${users[@]}" | sort -u)
+        
+        # Apply first N users if specified
+        if [[ $FIRST_USERS -gt 0 ]]; then
+            echo -e "${YELLOW}[*] Selecting first $FIRST_USERS users${NC}" >&2
+            local count=0
+            for user_entry in "${sorted_users[@]}"; do
+                if [[ $count -lt $FIRST_USERS ]]; then
+                    final_users+=("$user_entry")
+                    ((count++))
+                else
+                    break
+                fi
+            done
+        # Apply random sampling if requested
+        elif [[ $RANDOM_USERS -eq 1 ]]; then
+            local sample_size=${MAX_USERS:-10}
+            echo -e "${YELLOW}[*] Randomly selecting $sample_size users from ${#sorted_users[@]} discovered${NC}" >&2
+            
+            if [[ ${#sorted_users[@]} -le $sample_size ]]; then
+                final_users=("${sorted_users[@]}")
+            else
+                # Shuffle users and take first N
+                local shuffled_users=()
+                while IFS= read -r user_entry; do
+                    shuffled_users+=("$user_entry")
+                done < <(printf '%s\n' "${sorted_users[@]}" | shuf)
+                
+                for ((i=0; i<sample_size && i<${#shuffled_users[@]}; i++)); do
+                    final_users+=("${shuffled_users[i]}")
+                done
+            fi
+        # Apply max users limit if specified
+        elif [[ $MAX_USERS -gt 0 ]]; then
+            echo -e "${YELLOW}[*] Limiting to maximum $MAX_USERS users${NC}" >&2
+            local count=0
+            for user_entry in "${sorted_users[@]}"; do
+                if [[ $count -lt $MAX_USERS ]]; then
+                    final_users+=("$user_entry")
+                    ((count++))
+                else
+                    break
+                fi
+            done
+        else
+            # No sampling - use all users
+            final_users=("${sorted_users[@]}")
+        fi
+    fi
+    
+    echo -e "${GREEN}[+] Selected ${#final_users[@]} users for scanning${NC}" >&2
+    printf '%s\n' "${final_users[@]}"
 }
 
 #############################################################################
@@ -3566,6 +3644,28 @@ main() {
                 AUTO_SCALE_THREADS=0
                 shift
                 ;;
+            --max-users)
+                MAX_USERS="$2"
+                shift 2
+                ;;
+            --random-users)
+                RANDOM_USERS=1
+                if [[ "$2" =~ ^[0-9]+$ ]]; then
+                    MAX_USERS="$2"
+                    shift 2
+                else
+                    MAX_USERS=10  # Default to 10 random users
+                    shift
+                fi
+                ;;
+            --first-users)
+                FIRST_USERS="$2"
+                shift 2
+                ;;
+            --specific-users)
+                IFS=',' read -ra SPECIFIC_USERS <<< "$2"
+                shift 2
+                ;;
             --help|-h)
                 cat <<EOF
 Usage: $0 [OPTIONS]
@@ -3611,6 +3711,16 @@ Vulnerability Selection:
 Resume Options:
   --resume STATE_FILE         Resume scan from previous state file
 
+User Sampling Options:
+  --max-users NUM             Limit scan to maximum NUM users (0 = no limit)
+                              Example: --max-users 20
+  --random-users [NUM]        Randomly select users for scanning (default: 10)
+                              Example: --random-users 15
+  --first-users NUM           Scan only the first NUM users (alphabetically sorted)
+                              Example: --first-users 5
+  --specific-users USERS      Scan only specified users (comma-separated)
+                              Example: --specific-users user1,user2,webuser
+
 Output Control:
   -q, --quiet                 Quiet mode - show only critical/high vulnerabilities and progress
   -v, --verbose               Verbose mode - show all vulnerabilities and detailed output
@@ -3632,6 +3742,18 @@ Examples:
   
   # Scan only PHP and Python files in web directories
   $0 --include-paths /var/www,/home --include-extensions php,py,js --threads 15
+  
+  # Fast scan with random 10 users for quick assessment
+  $0 --random-users 10 --quick
+  
+  # Scan only first 5 users alphabetically with specific vulnerability types
+  $0 --first-users 5 --scan-types suid-sgid,world-permissions
+  
+  # Scan specific users only
+  $0 --specific-users webuser,admin,testuser --threads 20
+  
+  # Large environment optimization - limit to 20 users maximum
+  $0 --max-users 20 --threads 50 --quiet
   
   # Resume a previous scan
   $0 --resume ./scan_state_20241201_120000
