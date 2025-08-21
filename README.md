@@ -5,6 +5,9 @@
 ## Key Features
 
 ### Production-Ready Enhancements
+- **Universal Detection Framework** - Multi-fallback detection system with 4+ methods per vulnerability type
+- **System-Wide Scanning** - Enhanced SUID/SGID and world permissions detection across entire filesystem
+- **Advanced Exclusions** - Directory pruning (--exclude-paths) with automatic /proc, /sys, /dev exclusion
 - **Robust Signal Handling** - Proper Ctrl+C support without screen flooding
 - **Root User Optimization** - Smart detection adjustments when running as root
 - **Professional Output** - Clean dashboard with progress bars and status indicators
@@ -79,8 +82,11 @@ chmod +x scanner.sh
 # Maximum performance scan
 ./scanner.sh --threads auto --quick
 
-# Specific vulnerability types
-./scanner.sh --scan-types suid-sgid,config-files,ssh-keys
+# Specific vulnerability types with exclusions
+./scanner.sh --scan-types suid-sgid,config-files,ssh-keys --exclude-paths "/mnt,/media"
+
+# System-wide security audit
+./scanner.sh --scan-types suid-sgid,world-permissions --threads 100 --exclude-paths "/mnt"
 ```
 
 ### **Shared Hosting Security Audit**
@@ -129,9 +135,9 @@ chmod +x scanner.sh
 |--------|-------------|---------|
 | `--scan-types TYPES` | Vulnerability types | `suid-sgid,config-files` |
 | `--include-paths PATHS` | Scan specific paths | `/home,/var/www` |
-| `--exclude-paths PATHS` | Skip paths | `/proc,/sys,/dev` |
+| `--exclude-paths PATHS` | Skip paths (auto-excludes /proc,/sys,/dev) | `/mnt,/media,/tmp` |
+| `--exclude-extensions EXTS` | Skip file extensions | `log,tmp,cache,jpg,mp4` |
 | `--include-extensions EXTS` | File types | `php,py,js,env` |
-| `--exclude-extensions EXTS` | Skip file types | `log,tmp,cache` |
 
 ### **Performance Options**
 | Option | Description | Use Case |
@@ -196,6 +202,16 @@ chmod +x scanner.sh
 
 ### **Vulnerability Detection**
 ```bash
+# System-wide SUID/SGID detection
+[+] Fallback method successful: locate -r 'bin$' method
+[HIGH] SUID Binary: /usr/bin/sudo
+[HIGH] SUID Binary: /usr/bin/passwd
+[HIGH] SGID Binary: /usr/bin/chage
+
+# World permissions detection  
+[HIGH] WORLD_WRITE: init
+[INFO] WORLD_READ: 127 world-readable sensitive files found
+
 # Cross-user access detection
 [!] CRITICAL CROSS-USER ACCESS: /home1/user123/public_html/wp-config.php (Owner: user123)
 [!] WORDPRESS DB CREDENTIALS EXPOSED: /home1/user123/public_html/wp-config.php
@@ -205,13 +221,9 @@ chmod +x scanner.sh
 [!] HIGH STRUCTURE ACCESS: /home3/user789/api/config.py
 [+] Structure access: /home4/user999/public_html/index.php
 
-# Environment file exposure  
-[!] HIGH CROSS-USER ACCESS: /home2/user456/www/.env (Owner: user456)
-[!] ENVIRONMENT SECRETS EXPOSED: /home2/user456/www/.env (3 secrets)
-
-# SSH key exposure
-[!] CRITICAL: SSH PRIVATE KEY ACCESSIBLE: /home3/user789/.ssh/id_rsa
-[!] SSH FILE ACCESSIBLE: /home3/user789/.ssh/authorized_keys
+# Cron job vulnerabilities
+[!] WRITABLE CRON JOB: /etc/cron.daily/logrotate
+[!] WRITABLE CRON JOB: /etc/cron.d/sysstat
 ```
 
 ### **Report Generation**
@@ -262,11 +274,14 @@ Specifically designed for shared hosting environments:
 [+] Systematic cross-user check complete: 15 users checked, 23 accessible files found
 ```
 
-### **Alternative Detection Methods**
-Works without additional packages by using intelligent fallbacks:
+### **Universal Detection Framework**
+Advanced multi-fallback system for robust vulnerability detection:
+- **SUID/SGID Detection**: 4 fallback methods (combined find, alternative syntax, directory-based, locate)
+- **World Permissions**: Multiple detection methods with automatic directory pruning
 - **ACL Detection**: Extended attributes, permission patterns, location analysis
 - **Capability Detection**: Binary analysis, behavioral testing, extended attributes  
-- **Optimized Commands**: Uses fastest find commands for each vulnerability type
+- **System-Wide Exclusions**: Automatic pruning of /proc, /sys, /dev with user-specified exclusions
+- **Timeout Protection**: 300s primary method, 120s fallback method timeouts
 
 ### **Resume Functionality**
 ```bash
@@ -324,6 +339,14 @@ jq 'group_by(.severity) | .[] | {severity: .[0].severity, count: length}' scan_r
 | Large Hosting | 1000+ | 2M+ | 12m 30s | 2,667 files/sec |
 
 *Benchmarks on 8-core server with SSD storage*
+
+
+### **Multi-Fallback Reliability**
+- **Primary Detection Methods**: Fast system-wide find commands
+- **Fallback Method 1**: Alternative permission syntax (`-u=s`, `-g=s`)  
+- **Fallback Method 2**: Directory-based search in common binary locations
+- **Fallback Method 3**: Locate-based binary discovery (proven successful)
+- **Timeout Protection**: 300s primary, 120s fallback method limits
 
 ##  **Security Considerations**
 
