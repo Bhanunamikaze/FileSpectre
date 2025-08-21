@@ -3,7 +3,7 @@
 #############################################################################
 # FileSpectre - Advanced File Security Scanner
 # Purpose: Enterprise-grade security auditing for file system vulnerabilities
-# Version: 3.0 - FileSpectre Edition
+# Version: 2.0 - FileSpectre Edition
 #############################################################################
 
 # Color codes for output
@@ -880,6 +880,10 @@ scan_config_directory_deep() {
         -name "*.cfg" -o -name "*.properties" -o -name "*.yaml" -o \
         -name "*.yml" -o -name "*.json" -o -name "*.xml" \
     \) -readable 2>/dev/null | while IFS= read -r config_file; do
+        # Update worker heartbeat during file processing
+        local worker_heartbeat="$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat"
+        echo "$(date +%s)" > "$worker_heartbeat" 2>/dev/null
+        
         analyze_config_file "$config_file"
         
         # Check for secrets in config files
@@ -1138,11 +1142,13 @@ show_dashboard() {
     
     # Show dashboard 
     if [[ $SHOW_PROGRESS -eq 1 ]]; then
-        # In quiet mode, just add some spacing instead of cursor manipulation
+        # Use cursor positioning instead of clearing screen to prevent flickering
         if [[ $QUIET_MODE -eq 1 ]]; then
-            echo ""
+            # Move cursor up to overwrite previous dashboard
+            printf "\033[10A\033[2K"
         else
-            clear
+            # Move cursor to top and clear previous content
+            printf "\033[H\033[10J"
         fi
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
         echo -e "${CYAN}║                    ${WHITE}FILESPECTRE${NC}${CYAN}                            ║${NC}"
@@ -1154,9 +1160,11 @@ show_dashboard() {
         echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
         echo ""
         
-        # Progress bar for users
-        show_progress_bar "$processed_users" "$total_users" "Scanning Users"
-        echo ""
+        # Progress bar for users (only if not in main scanning loop to avoid duplication)
+        if [[ "${SHOW_USER_PROGRESS:-1}" -eq 1 ]]; then
+            show_progress_bar "$processed_users" "$total_users" "Scanning Users"
+            echo ""
+        fi
     fi
 }
 
@@ -2476,6 +2484,10 @@ deep_scan_directory() {
     local dir="$1"
     local scan_type="$2"
     
+    # Update worker heartbeat at start of directory scan
+    local worker_heartbeat="$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat"
+    echo "$(date +%s)" > "$worker_heartbeat" 2>/dev/null
+    
     # Check if this path should be scanned
     if ! should_scan_path "$dir"; then
         echo -e "${YELLOW}[*] Skipping excluded path: $dir${NC}"
@@ -2639,6 +2651,13 @@ scan_worker() {
     local username="$2"
     local worker_id="$3"
     
+    # Set worker ID for heartbeat tracking
+    export WORKER_ID="$worker_id"
+    
+    # Create worker heartbeat file for activity monitoring
+    local worker_heartbeat="$TEMP_DIR/worker_${worker_id}_heartbeat"
+    echo "$(date +%s)" > "$worker_heartbeat"
+    
     # Quiet mode - only show in verbose mode
     if [[ $VERBOSE_MODE -eq 1 ]]; then
         echo -e "${BLUE}[Worker-$worker_id] Scanning user: $username${NC}"
@@ -2673,6 +2692,9 @@ scan_worker() {
     
     # Mark user as processed
     increment_counter "$TEMP_DIR/processed_users"
+    
+    # Clean up worker heartbeat file
+    rm -f "$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat" 2>/dev/null
 }
 
 # Parallel scan manager
@@ -2702,6 +2724,9 @@ parallel_scan() {
         fi
     fi
     
+    # Disable progress bar in dashboard during main scanning loop to avoid duplication
+    SHOW_USER_PROGRESS=0
+    
     for user_data in "${users[@]}"; do
         # Check for interruption
         if [[ $INTERRUPTED -eq 1 ]]; then
@@ -2726,7 +2751,12 @@ parallel_scan() {
                 scan_speed=$((files / elapsed))
             fi
             
-            show_dashboard "$username" "$total_users" "$processed" "$vulns" "$scan_speed"
+            # Only update dashboard every 3 seconds to prevent flickering
+            local current_time=$(date +%s)
+            if [[ $((current_time - ${last_dashboard_update:-0})) -ge 3 ]]; then
+                show_dashboard "$username" "$total_users" "$processed" "$vulns" "$scan_speed"
+                last_dashboard_update=$current_time
+            fi
             
             # Save scan state every 50 users
             if [[ $((job_count % 50)) -eq 0 ]]; then
@@ -2772,22 +2802,73 @@ parallel_scan() {
                 scan_speed=$((files / elapsed))
             fi
             
-            # Check if scan is stuck (no progress for 30 seconds)
-            if [[ $processed -eq $last_processed ]]; then
+            # Enhanced stuck detection - monitor file processing activity, not just user completion
+            local current_files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
+            local current_vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
+            
+            # Check for ANY activity: user progress, file processing, or vulnerability detection
+            local activity_detected=0
+            if [[ $processed -ne ${last_processed:-0} ]] || 
+               [[ $current_files -ne ${last_files:-0} ]] || 
+               [[ $current_vulns -ne ${last_vulns:-0} ]]; then
+                activity_detected=1
+            fi
+            
+            # Additional check: Worker heartbeat monitoring
+            if [[ $activity_detected -eq 0 ]]; then
+                local current_time=$(date +%s)
+                local active_workers=0
+                
+                # Check for recent worker activity (within last 30 seconds)
+                for heartbeat_file in "$TEMP_DIR"/worker_*_heartbeat; do
+                    if [[ -f "$heartbeat_file" ]]; then
+                        local last_heartbeat=$(cat "$heartbeat_file" 2>/dev/null || echo "0")
+                        if [[ $((current_time - last_heartbeat)) -lt 30 ]]; then
+                            active_workers=$((active_workers + 1))
+                        fi
+                    fi
+                done
+                
+                # If workers are still active (recent heartbeats), consider it as activity
+                if [[ $active_workers -gt 0 ]]; then
+                    activity_detected=1
+                    if [[ $VERBOSE_MODE -eq 1 ]]; then
+                        echo -e "${CYAN}[*] $active_workers workers still active...${NC}"
+                    fi
+                fi
+            fi
+            
+            if [[ $activity_detected -eq 1 ]]; then
+                # Reset stuck counter on any activity
+                stuck_counter=0
+                last_processed=$processed
+                last_files=$current_files
+                last_vulns=$current_vulns
+            else
+                # No activity detected
                 ((stuck_counter++))
-                if [[ $stuck_counter -gt 30 ]]; then
-                    echo -e "${YELLOW}[!] Scan appears stuck at $processed/$total_users users. Terminating remaining workers...${NC}"
+                
+                # Adaptive timeout based on environment size
+                local timeout_threshold=60  # Base: 60 seconds
+                if [[ $total_users -gt 100 ]]; then
+                    timeout_threshold=120  # Large environments: 2 minutes
+                elif [[ $total_users -gt 500 ]]; then
+                    timeout_threshold=180  # Very large: 3 minutes
+                fi
+                
+                if [[ $stuck_counter -gt $timeout_threshold ]]; then
+                    echo -e "${YELLOW}[!] No activity detected for ${timeout_threshold}s at $processed/$total_users users (${current_files} files, ${current_vulns} vulnerabilities found)${NC}"
+                    echo -e "${YELLOW}[!] Terminating remaining workers...${NC}"
                     jobs -p | xargs -r kill -TERM 2>/dev/null
                     break
                 fi
-            else
-                stuck_counter=0
-                last_processed=$processed
             fi
             
             # Only update progress every 4 seconds to prevent clearing messages too quickly
             local current_time=$(date +%s)
             if [[ $((current_time - last_progress_update)) -ge 4 ]]; then
+                # Clear any previous output before showing progress
+                printf "\033[2K\r"
                 show_progress_bar "$processed" "$total_users" "Processing remaining users..."
                 last_progress_update=$current_time
             fi
