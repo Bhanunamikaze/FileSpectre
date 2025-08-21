@@ -366,9 +366,14 @@ show_progress_bar() {
     for ((i=0; i<filled; i++)); do bar+="█"; done
     for ((i=0; i<empty; i++)); do bar+="░"; done
     
-    # Clear line and show progress
-    printf "\r${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)" \
-           "$percentage" "$bar" "$message" "$current" "$total"
+    # Show progress (avoid \r in quiet mode to prevent conflicts)
+    if [[ $QUIET_MODE -eq 1 ]]; then
+        printf "${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)\n" \
+               "$percentage" "$bar" "$message" "$current" "$total"
+    else
+        printf "\r${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)" \
+               "$percentage" "$bar" "$message" "$current" "$total"
+    fi
     
     if [[ $current -eq $total ]]; then
         echo ""  # New line when complete
@@ -439,12 +444,11 @@ show_dashboard() {
         speed_display="${speed_k}k"
     fi
     
-    # Show dashboard (only clear screen if in quiet mode and significant time has passed)
+    # Show dashboard 
     if [[ $SHOW_PROGRESS -eq 1 ]]; then
-        # Only clear screen in quiet mode and not too frequently
+        # In quiet mode, just add some spacing instead of cursor manipulation
         if [[ $QUIET_MODE -eq 1 ]]; then
-            # Move cursor to top but don't clear to preserve vulnerability messages
-            printf '\033[H'
+            echo ""
         else
             clear
         fi
@@ -573,7 +577,7 @@ should_scan_file_fast() {
     
     # Skip common binary extensions that are unlikely to have vulnerabilities
     case "$ext" in
-        jpg|jpeg|png|gif|bmp|ico|svg|mp3|mp4|avi|mkv|xz|exe|dll|so|a|js|css|map|o|class)
+        jpg|jpeg|png|gif|js|css|map|bmp|ico|svg|pdf|mp3|mp4|avi|mkv|xz|exe|dll|so|a|o|class)
             return 1
             ;;
         *)
