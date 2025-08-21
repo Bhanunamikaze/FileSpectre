@@ -1046,8 +1046,9 @@ show_progress_bar() {
     local current="$1"
     local total="$2"
     local message="$3"
+    local files_info="${4:-}"  # Optional file progress info
     local width=$(get_terminal_width)
-    local bar_width=$((width - 50))  # Leave space for text and percentage
+    local bar_width=$((width - 100))  # Leave more space for file info and user info
     
     if [[ $bar_width -lt 20 ]]; then
         bar_width=20
@@ -1062,14 +1063,17 @@ show_progress_bar() {
     for ((i=0; i<filled; i++)); do bar+="█"; done
     for ((i=0; i<empty; i++)); do bar+="░"; done
     
-    # Show progress (avoid \r in quiet mode to prevent conflicts)
-    if [[ $QUIET_MODE -eq 1 ]]; then
-        printf "${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)\n" \
-               "$percentage" "$bar" "$message" "$current" "$total"
-    else
-        printf "\r${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)" \
-               "$percentage" "$bar" "$message" "$current" "$total"
+    # Clear previous line and show progress in-place for both modes
+    printf "\033[2K\r${CYAN}[%3d%%]${NC} ${GREEN}%s${NC} ${BLUE}%s${NC} (%d/%d)" \
+           "$percentage" "$bar" "$message" "$current" "$total"
+    
+    # Add file progress info if provided
+    if [[ -n "$files_info" ]]; then
+        printf " ${YELLOW}%s${NC}" "$files_info"
     fi
+    
+    # Force output to display immediately
+    tput el  # Clear to end of line
     
     if [[ $current -eq $total ]]; then
         echo ""  # New line when complete
@@ -1162,7 +1166,9 @@ show_dashboard() {
         
         # Progress bar for users (only if not in main scanning loop to avoid duplication)
         if [[ "${SHOW_USER_PROGRESS:-1}" -eq 1 ]]; then
-            show_progress_bar "$processed_users" "$total_users" "Scanning Users"
+            local files_scanned=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
+            local files_info="Files: $files_scanned"
+            show_progress_bar "$processed_users" "$total_users" "Scanning Users" "$files_info"
             echo ""
         fi
     fi
@@ -2735,6 +2741,9 @@ parallel_scan() {
         
         IFS=':' read -r username user_home <<< "$user_data"
         
+        # Track current user being processed
+        echo "$username" > "$TEMP_DIR/current_user"
+        
         # Show dashboard in quiet mode
         if [[ $QUIET_MODE -eq 1 ]] && [[ $((job_count % 10)) -eq 0 ]] && [[ $job_count -gt 5 ]]; then
             # Brief delay to let counters update from background workers
@@ -2867,9 +2876,13 @@ parallel_scan() {
             # Only update progress every 4 seconds to prevent clearing messages too quickly
             local current_time=$(date +%s)
             if [[ $((current_time - last_progress_update)) -ge 4 ]]; then
-                # Clear any previous output before showing progress
-                printf "\033[2K\r"
-                show_progress_bar "$processed" "$total_users" "Processing remaining users..."
+                # Get file progress info and current user
+                local current_files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
+                local current_vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
+                local current_user=$(cat "$TEMP_DIR/current_user" 2>/dev/null || echo "...")
+                local files_info="F:$current_files V:$current_vulns U:$current_user"
+                
+                show_progress_bar "$processed" "$total_users" "Processing remaining users..." "$files_info"
                 last_progress_update=$current_time
             fi
             
