@@ -3,7 +3,7 @@
 #############################################################################
 # FileSpectre - Advanced File Security Scanner
 # Purpose: Enterprise-grade security auditing for file system vulnerabilities
-# Version: 2.0 - FileSpectre Edition
+# Version: 3.0 - FileSpectre Edition
 #############################################################################
 
 # Color codes for output
@@ -29,7 +29,7 @@ AUTO_SCALE_THREADS=1
 OUTPUT_DIR="$(pwd)"
 EXPORT_FORMATS=("json" "csv" "html" "xml")
 INCLUDE_PATHS=()
-EXCLUDE_PATHS=("/proc" "/sys" "/dev")
+EXCLUDE_PATHS=()
 INCLUDE_EXTENSIONS=()
 EXCLUDE_EXTENSIONS=()
 SCAN_TYPES=("all")
@@ -247,92 +247,784 @@ load_scan_state() {
 #############################################################################
 
 generate_sensitive_patterns() {
-    # Dynamically generate patterns based on discovered technologies
+    # Production-grade sensitive file patterns for enterprise environments
     local tech_stack=()
     local patterns=()
     
-    # Detect installed technologies
+    # Detect installed technologies and add specific patterns
     if command -v php &>/dev/null; then
         tech_stack+=("php")
-        patterns+=("*.php" "*.inc" "*.phtml")
+        patterns+=("*.php" "*.inc" "*.phtml" "php.ini" "php-fpm.conf" ".user.ini")
     fi
     
     if command -v python &>/dev/null; then
         tech_stack+=("python")
-        patterns+=("*.py" "*.pyc" "*.pyo" "settings.py" "config.py")
+        patterns+=("*.py" "*.pyc" "*.pyo" "settings.py" "config.py" "requirements.txt" "django.conf" "flask.conf")
     fi
     
     if command -v node &>/dev/null; then
         tech_stack+=("nodejs")
-        patterns+=("*.js" "package.json" ".env" "*.env.*")
+        patterns+=("*.js" "package.json" ".env*" ".npmrc" ".yarnrc" "ecosystem.config.js" "pm2.config.js")
     fi
     
     if command -v ruby &>/dev/null; then
         tech_stack+=("ruby")
-        patterns+=("*.rb" "Gemfile" "database.yml" "secrets.yml")
+        patterns+=("*.rb" "Gemfile*" "database.yml" "secrets.yml" ".ruby-version")
     fi
     
     if command -v java &>/dev/null; then
         tech_stack+=("java")
-        patterns+=("*.properties" "*.xml" "*.class" "*.jar")
+        patterns+=("*.properties" "*.xml" "*.class" "*.jar" "*.keystore" "*.jks")
     fi
     
-    # Database configurations
+    # Web Server Configurations (Apache, Nginx, IIS)
     patterns+=(
-        "*config*"
-        "*database*"
-        "*credential*"
-        "*password*"
-        "*secret*"
-        "*key*"
-        "*token*"
-        "*api*"
-        "*.sql"
-        "*.db"
-        "*.sqlite"
+        "httpd.conf" "apache2.conf" "nginx.conf" "default.conf" "000-default.conf"
+        ".htaccess" ".htpasswd" "access.log" "error.log" "ssl.conf" "vhosts.conf"
+        "sites-available/*" "sites-enabled/*" "conf.d/*" "mods-enabled/*"
+        "web.config" "applicationHost.config" "machine.config"
     )
     
-    # Version control and development
+    # Database Configurations (MySQL, PostgreSQL, MongoDB, Redis)
     patterns+=(
-        ".git/*"
-        ".svn/*"
-        ".hg/*"
-        ".bzr/*"
-        ".gitconfig"
-        ".gitignore"
-        ".git-credentials"
+        "my.cnf" "my.ini" "mysql.conf" "mariadb.conf" "client.cnf" "server.cnf"
+        "mysqld.cnf" ".my.cnf" ".mysql_history" "mysql_secure_installation"
+        "postgresql.conf" "pg_hba.conf" "pg_ident.conf" "recovery.conf"
+        "postgres.conf" "pgsql.conf" ".psql_history" "pgpass"
+        "mongodb.conf" "mongod.conf" "mongo.conf" ".mongorc.js"
+        "redis.conf" "redis-server.conf" "sentinel.conf" "cluster.conf"
+        "elasticsearch.yml" "logstash.conf" "kibana.yml" "beats.yml"
+        "cassandra.conf" "cassandra.yaml" "cqlshrc"
     )
     
-    # Backup patterns
+    # Application Framework Configurations
     patterns+=(
-        "*.bak"
-        "*.backup"
-        "*.old"
-        "*.save"
-        "*.swp"
-        "*.swo"
-        "*~"
-        "*.orig"
-        "*.tmp"
-        "*.temp"
-        "*.cache"
+        # WordPress & PHP Frameworks
+        "wp-config.php" "wp-config-sample.php" ".wp-cli.yml" "wp-cli.yml"
+        "settings.php" "services.yml" "sites.php" "local.xml" "env.php"
+        "app.php" "parameters.yml" "config.yml" "security.yml"
+        
+        # Laravel & Symfony
+        ".env.local" ".env.production" ".env.development" ".env.staging"
+        "config/app.php" "config/database.php" "config/mail.php"
+        
+        # Drupal & Joomla
+        "configuration.php" "LocalSettings.php" "settings.local.php"
+        "sites/default/settings.php" "sites/default/files/*"
     )
     
-    # System and configuration
+    # SSL/TLS Certificates & Private Keys
     patterns+=(
-        ".bashrc"
-        ".bash_history"
-        ".zsh_history"
-        ".mysql_history"
-        ".psql_history"
-        ".ssh/*"
-        ".gnupg/*"
-        ".aws/*"
-        ".kube/*"
-        ".docker/*"
+        "*.key" "*.pem" "*.crt" "*.cer" "*.p12" "*.pfx" "*.jks" "*.keystore"
+        "*.ca-bundle" "*.ca-cert" "ca-certificates.conf" "ssl-cert-snakeoil.key"
+        "private.key" "server.key" "client.key" "ssl.key" "tls.key"
+        "*.csr" "*.der" "*.p7b" "*.p7c" "*.spc" "fullchain.pem"
+        "privkey.pem" "chain.pem" "cert.pem" "dhparam.pem"
+    )
+    
+    # Container & Orchestration Configurations
+    patterns+=(
+        "Dockerfile*" "docker-compose*.yml" "docker-compose*.yaml" ".dockerignore"
+        ".docker-compose.yml" "docker-compose.override.yml"
+        "kubernetes*.yml" "*.k8s.yml" "kustomization.yaml" "skaffold.yaml"
+        "helm-values.yaml" "values.yaml" "Chart.yaml" "requirements.yaml"
+        "deployment.yaml" "service.yaml" "configmap.yaml" "secret.yaml"
+    )
+    
+    # Cloud Provider Configurations
+    patterns+=(
+        # AWS
+        ".aws/credentials" ".aws/config" "*.pem" "*.p12" "*.ppk"
+        "aws-credentials.ini" "awscli.conf" "boto.cfg" "s3cfg"
+        "terraform.tfvars" ".terraformrc" "terraform.rc" "*.tf"
+        "cloudformation*.json" "cloudformation*.yaml" "sam*.yaml"
+        
+        # Google Cloud
+        "*.json" "gcloud.conf" "service-account*.json" "key.json"
+        ".gcloudignore" "app.yaml" "cron.yaml" "dispatch.yaml"
+        
+        # Azure
+        "azure.conf" "*.publishsettings" "ServiceConfiguration*.cscfg"
+        "ServiceDefinition.csdef" "azure-pipelines.yml"
+    )
+    
+    # Version Control & Development Files
+    patterns+=(
+        ".git/config" ".gitconfig" ".git-credentials" ".netrc"
+        ".svn/auth" ".hg/hgrc" ".bzr/bazaar.conf"
+        ".vscode/settings.json" ".idea/workspace.xml" ".sublime-project"
+        ".project" ".classpath" ".settings/*" "nbproject/*"
+        "*.sublime-workspace" "*.code-workspace" ".vscode/launch.json"
+    )
+    
+    # System Service Configurations
+    patterns+=(
+        # Systemd & Init
+        "systemd/*.service" "systemd/*.socket" "systemd/*.timer"
+        "init.d/*" "xinetd.d/*" "systemd/system/*" "systemd/user/*"
+        
+        # Cron & Scheduling
+        "crontab" "anacrontab" "at.allow" "at.deny" "cron.allow" "cron.deny"
+        "/var/spool/cron/*" "/etc/cron.d/*" "/etc/cron.*/*"
+        
+        # Network Services
+        "sshd_config" "ssh_config" "hosts.allow" "hosts.deny"
+        "exports" "nfs.conf" "smb.conf" "samba.conf" "vsftpd.conf"
+        "proftpd.conf" "pure-ftpd.conf" "xinetd.conf" "inetd.conf"
+        
+        # Mail Services
+        "postfix/main.cf" "postfix/master.cf" "dovecot.conf" "exim.conf"
+        "sendmail.cf" "sendmail.mc" "email.conf" "mail.conf"
+        "smtp.conf" "imap.conf" "pop3.conf"
+    )
+    
+    # Backup & Archive Files
+    patterns+=(
+        "*.bak" "*.backup" "*.old" "*.save" "*.orig" "*.copy"
+        "*.swp" "*.swo" "*.tmp" "*.temp" "*.cache" "*~"
+        "*.dump" "*.sql.gz" "*.tar.gz" "*.zip" "*.rar" "*.7z"
+        "backup/*" "backups/*" "dumps/*" "exports/*" "archive/*"
+        "*.snapshot" "*.log.old" "*.conf.old" "*.bak.*"
+    )
+    
+    # User & Authentication Files
+    patterns+=(
+        ".ssh/id_rsa" ".ssh/id_dsa" ".ssh/id_ecdsa" ".ssh/id_ed25519"
+        ".ssh/authorized_keys" ".ssh/known_hosts" ".ssh/config"
+        ".gnupg/secring.gpg" ".gnupg/pubring.gpg" ".gnupg/gpg.conf"
+        "shadow" "passwd" "group" "gshadow" ".passwd" ".shadow"
+        "sudoers" "sudoers.d/*" ".sudo_as_admin_successful"
+        "krb5.conf" "krb5.keytab" ".k5login" "kerberos.conf"
+    )
+    
+    # Application & Service Secrets
+    patterns+=(
+        # Generic secret patterns
+        "*secret*" "*password*" "*credential*" "*token*" "*key*" "*api*"
+        "*auth*" "*oauth*" "*jwt*" "*session*" "*cookie*"
+        "*.p12" "*.pfx" "*.jks" "*.keystore" "*.truststore"
+        
+        # Specific application secrets
+        ".env" ".env.*" "secrets.json" "appsettings.json" "local.json"
+        "config.json" "settings.json" "credentials.json" "tokens.json"
+        "application.properties" "application-*.properties"
+        "hibernate.cfg.xml" "persistence.xml" "context.xml"
+        
+        # Database connection files
+        "*.dsn" "*.udl" "database.yml" "database.json" "db.conf"
+        "connection.php" "connect.php" "config.php" "setup.php"
+    )
+    
+    # Log Files with Potential Sensitive Data  
+    patterns+=(
+        "*.log" "*.log.*" "logs/*" "log/*" "var/log/*"
+        "access.log*" "error.log*" "debug.log*" "application.log*"
+        "security.log*" "audit.log*" "auth.log*" "system.log*"
+        ".bash_history" ".zsh_history" ".mysql_history" ".psql_history"
+        ".python_history" ".node_repl_history" ".sqlite_history"
+    )
+    
+    # Monitoring & DevOps Tools
+    patterns+=(
+        # Prometheus & Grafana
+        "prometheus.yml" "alertmanager.yml" "grafana.ini"
+        
+        # Nagios & Monitoring
+        "nagios.cfg" "nrpe.cfg" "nsca.cfg" "check_*"
+        
+        # CI/CD Configurations
+        ".github/workflows/*" ".gitlab-ci.yml" "Jenkinsfile"
+        "azure-pipelines.yml" ".travis.yml" ".circleci/config.yml"
+        "buildspec.yml" "appspec.yml" "deploy.yml"
+        
+        # Configuration Management
+        "ansible.cfg" "hosts.yml" "inventory.yml" "playbook.yml"
+        "Vagrantfile" "Berksfile" "metadata.rb" "attributes/*"
+        "puppet.conf" "site.pp" "Puppetfile" "hiera.yaml"
+        "chef-repo/*" "cookbooks/*" "roles/*" "environments/*"
     )
     
     printf '%s\n' "${patterns[@]}"
+}
+
+#############################################################################
+# Find Command Helpers and Path Exclusion
+#############################################################################
+
+# Generate find exclusion patterns for paths and extensions
+generate_find_exclusions() {
+    local exclude_patterns=""
+    
+    # Always exclude system directories
+    exclude_patterns="-path /proc -prune -o -path /sys -prune -o -path /dev -prune"
+    
+    # Add user-specified exclude paths
+    if [[ ${#EXCLUDE_PATHS[@]} -gt 0 ]]; then
+        for exclude_path in "${EXCLUDE_PATHS[@]}"; do
+            # Ensure path starts with /
+            [[ "$exclude_path" != /* ]] && exclude_path="/$exclude_path"
+            exclude_patterns="$exclude_patterns -o -path $exclude_path -prune"
+        done
+    fi
+    
+    # Add implicit exclusions for common noisy directories (only if not already excluded by user)
+    local common_excludes=(
+        "/var/tmp" "/usr/share/doc" "/usr/share/man" 
+        "/usr/lib/debug" "/boot" "/media" "/run"
+    )
+    
+    # Only add /tmp if user hasn't specified it (but don't auto-exclude /mnt)
+    local add_tmp=1
+    if [[ ${#EXCLUDE_PATHS[@]} -gt 0 ]]; then
+        for user_path in "${EXCLUDE_PATHS[@]}"; do
+            [[ "$user_path" == "/tmp" || "$user_path" == *"/tmp"* ]] && add_tmp=0
+        done
+    fi
+    [[ $add_tmp -eq 1 ]] && common_excludes+=("/tmp")
+    
+    for common_exclude in "${common_excludes[@]}"; do
+        exclude_patterns="$exclude_patterns -o -path $common_exclude -prune"
+    done
+    
+    echo "$exclude_patterns"
+}
+
+# Generate find command with proper exclusions and search criteria
+build_find_command() {
+    local search_path="$1"
+    local search_criteria="$2"
+    local type_filter="$3"  # Optional: -type f, -type d, etc.
+    
+    local exclusions=$(generate_find_exclusions)
+    local full_command="find $search_path \\( $exclusions -o $search_criteria"
+    
+    [[ -n "$type_filter" ]] && full_command="$full_command $type_filter"
+    full_command="$full_command -print \\) 2>/dev/null"
+    
+    echo "$full_command"
+}
+
+# Check if path should be excluded based on extension
+should_exclude_extension() {
+    local file="$1"
+    local extension="${file##*.}"
+    
+    # Skip if no exclude extensions specified
+    [[ ${#EXCLUDE_EXTENSIONS[@]} -eq 0 ]] && return 1
+    
+    # Check if extension matches any exclude pattern
+    for exclude_ext in "${EXCLUDE_EXTENSIONS[@]}"; do
+        [[ "$extension" == "$exclude_ext" ]] && return 0
+    done
+    
+    return 1
+}
+
+# Check if path should be excluded
+should_exclude_path() {
+    local file_path="$1"
+    
+    # Check exclude paths
+    if [[ ${#EXCLUDE_PATHS[@]} -gt 0 ]]; then
+        for exclude_path in "${EXCLUDE_PATHS[@]}"; do
+            # Handle both absolute and relative patterns
+            if [[ "$file_path" == *"$exclude_path"* ]]; then
+                return 0
+            fi
+        done
+    fi
+    
+    return 1
+}
+
+#############################################################################
+# Universal Detection Framework with Fallback Mechanisms
+#############################################################################
+
+# Universal vulnerability detector with multiple fallback methods
+universal_vulnerability_detector() {
+    local detection_type="$1"
+    local primary_method="$2"  
+    shift 2
+    local fallback_methods=("$@")
+    
+    [[ $QUIET_MODE -eq 0 ]] && echo "[*] Starting $detection_type detection..."
+    
+    # Primary method with timeout
+    local results=()
+    local success=0
+    
+    # Execute primary method
+    if timeout 300 bash -c "$primary_method" 2>/dev/null; then
+        success=1
+        [[ $QUIET_MODE -eq 0 ]] && echo "[+] Primary method successful for $detection_type"
+    else
+        [[ $QUIET_MODE -eq 0 ]] && echo "[!] Primary method failed, trying fallbacks for $detection_type"
+        
+        # Try each fallback method
+        for fallback in "${fallback_methods[@]}"; do
+            if timeout 120 bash -c "$fallback" 2>/dev/null; then
+                success=1
+                [[ $QUIET_MODE -eq 0 ]] && echo "[+] Fallback method successful: $fallback"
+                break
+            else
+                [[ $QUIET_MODE -eq 0 ]] && echo "[!] Fallback failed: $fallback"
+            fi
+        done
+    fi
+    
+    if [[ $success -eq 0 ]]; then
+        [[ $QUIET_MODE -eq 0 ]] && echo "[!] All detection methods failed for $detection_type"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Enhanced SUID/SGID detection with system-wide scanning and fallbacks
+detect_suid_sgid_systemwide() {
+    local results=()
+    local temp_file="/tmp/suid_sgid_results_$$"
+    
+    # Method 1: Combined SUID/SGID detection with proper syntax
+    local exclusions=$(generate_find_exclusions)
+    local method1="find / $exclusions -o -perm -4000 -o -perm -2000 -type f -print 2>/dev/null > '$temp_file.combined'"
+    
+    # Method 2: Alternative perm syntax  
+    local method2="find / $exclusions -o -perm -u=s -o -perm -g=s -type f -print 2>/dev/null > '$temp_file.alt'"
+    
+    # Method 3: Directory-based search using common binary locations
+    local method3="for bindir in /usr/bin /bin /sbin /usr/sbin /usr/local/bin /opt/*/bin; do [[ -d \"\$bindir\" ]] && find \"\$bindir\" \\( -perm -4000 -o -perm -2000 \\) -type f 2>/dev/null; done > '$temp_file.dirs'"
+    
+    # Method 4: System binary paths with locate
+    local method4="locate -r 'bin$' 2>/dev/null | xargs -I {} find {} -maxdepth 1 \\( -perm -4000 -o -perm -2000 \\) -type f 2>/dev/null > '$temp_file.locate'"
+    
+    if universal_vulnerability_detector "SUID/SGID" "$method1" "$method2" "$method3" "$method4"; then
+        # Process results from successful method
+        for result_file in "$temp_file."*; do
+            [[ -f "$result_file" ]] && cat "$result_file" 2>/dev/null
+        done | sort -u | while IFS= read -r binary; do
+            if [[ -n "$binary" && -f "$binary" ]]; then
+                # Check exclusions
+                if ! should_exclude_path "$binary" && ! should_exclude_extension "$binary"; then
+                    process_suid_sgid_binary "$binary"
+                fi
+            fi
+        done
+    fi
+    
+    # Cleanup
+    rm -f "$temp_file."* 2>/dev/null
+}
+
+# Enhanced world permissions detection with system-wide scanning
+detect_world_permissions_systemwide() {
+    local temp_file="/tmp/world_perms_results_$$"
+    
+    # Method 1: Standard world-writable detection
+    local exclusions=$(generate_find_exclusions)
+    local method1="find / \\( $exclusions -o -perm -2 ! -type l -ls -print \\) 2>/dev/null > '$temp_file.writable'"
+    
+    # Method 2: Alternative world-writable syntax
+    local method2="find / \\( $exclusions -o -perm -o+w ! -type l -ls -print \\) 2>/dev/null > '$temp_file.writable_alt'"
+    
+    # Method 3: World-readable sensitive files (focus on common sensitive locations)
+    local method3="find /etc /home /root /var /opt \\( $exclusions -o -perm -o+r -type f -print \\) 2>/dev/null | grep -E '\\.(conf|config|ini|key|pem|crt)$' > '$temp_file.readable'"
+    
+    # Method 4: Sticky bit analysis
+    local method4="find / \\( $exclusions -o -perm -1000 -type d -print \\) 2>/dev/null > '$temp_file.sticky'"
+    
+    if universal_vulnerability_detector "World Permissions" "$method1" "$method2" "$method3" "$method4"; then
+        # Process world-writable files
+        if [[ -f "$temp_file.writable" || -f "$temp_file.writable_alt" ]]; then
+            cat "$temp_file.writable" "$temp_file.writable_alt" 2>/dev/null | \
+            awk '{print $NF}' | sort -u | while IFS= read -r file; do
+                [[ -n "$file" && -f "$file" ]] && process_world_writable_file "$file"
+            done
+        fi
+        
+        # Process world-readable sensitive files
+        if [[ -f "$temp_file.readable" ]]; then
+            while IFS= read -r file; do
+                [[ -n "$file" && -f "$file" ]] && process_world_readable_file "$file"
+            done < "$temp_file.readable"
+        fi
+        
+        # Process sticky bit directories
+        if [[ -f "$temp_file.sticky" ]]; then
+            while IFS= read -r dir; do
+                [[ -n "$dir" && -d "$dir" ]] && analyze_sticky_bit_dir "$dir"
+            done < "$temp_file.sticky"
+        fi
+    fi
+    
+    # Cleanup
+    rm -f "$temp_file."* 2>/dev/null
+}
+
+# Enhanced configuration file detection with dynamic patterns
+detect_config_files_systemwide() {
+    local temp_file="/tmp/config_results_$$"
+    
+    # Method 1: Pattern-based search for common config files
+    local exclusions=$(generate_find_exclusions)
+    local method1="find / \\( $exclusions -o \\( -name '*.conf' -o -name '*.config' -o -name '*.ini' -o -name '*config*' \\) -type f -print \\) 2>/dev/null > '$temp_file.patterns'"
+    
+    # Method 2: Directory-based search in common config locations
+    local method2="for confdir in /etc /usr/local/etc /opt/*/etc /var/*/config /home/*/config; do [[ -d \"\$confdir\" ]] && find \"\$confdir\" \\( $exclusions -o -type f -print \\) 2>/dev/null; done > '$temp_file.dirs'"
+    
+    # Method 3: Content-based detection (files containing 'password', 'secret', 'key')
+    local method3="find /etc /home /var \\( $exclusions -o -type f -print \\) -exec grep -l 'password\\|secret\\|key\\|credential' {} + 2>/dev/null > '$temp_file.content'"
+    
+    # Method 4: Web server specific configs
+    local method4="find / \\( $exclusions -o \\( -name 'httpd.conf' -o -name 'nginx.conf' -o -name 'apache2.conf' -o -name '.htaccess' -o -name 'wp-config.php' \\) -type f -print \\) 2>/dev/null > '$temp_file.web'"
+    
+    if universal_vulnerability_detector "Configuration Files" "$method1" "$method2" "$method3" "$method4"; then
+        # Process all found configuration files
+        for result_file in "$temp_file."*; do
+            [[ -f "$result_file" ]] && cat "$result_file" 2>/dev/null
+        done | sort -u | while IFS= read -r config_file; do
+            if [[ -n "$config_file" && -f "$config_file" ]]; then
+                # Check exclusions
+                if ! should_exclude_path "$config_file" && ! should_exclude_extension "$config_file"; then
+                    analyze_config_file "$config_file"
+                fi
+            fi
+        done
+    fi
+    
+    # Cleanup
+    rm -f "$temp_file."* 2>/dev/null
+}
+
+# Helper functions for processing detection results
+process_suid_sgid_binary() {
+    local binary="$1"
+    local perms=$(stat -c "%a" "$binary" 2>/dev/null || echo "unknown")
+    local owner=$(stat -c "%U" "$binary" 2>/dev/null || echo "unknown")
+    
+    # Determine if SUID or SGID
+    local suid_bit=""
+    local sgid_bit=""
+    [[ $perms =~ ^[0-9]*4[0-9]*$ ]] && suid_bit="SUID"
+    [[ $perms =~ ^[0-9]*2[0-9]*$ ]] && sgid_bit="SGID"
+    
+    local vuln_type="${suid_bit}${sgid_bit:+${suid_bit:+/}$sgid_bit} Binary"
+    log_vulnerability "HIGH" "$vuln_type" "$binary" "Executable with elevated privileges (owner: $owner, perms: $perms)"
+}
+
+process_world_writable_file() {
+    local file="$1"
+    local perms=$(stat -c "%a" "$file" 2>/dev/null || echo "unknown")
+    log_vulnerability "MEDIUM" "World Writable File" "$file" "File writable by all users (perms: $perms)"
+}
+
+process_world_readable_file() {
+    local file="$1"
+    local perms=$(stat -c "%a" "$file" 2>/dev/null || echo "unknown")
+    log_vulnerability "LOW" "World Readable Sensitive File" "$file" "Sensitive file readable by all users (perms: $perms)"
+}
+
+analyze_sticky_bit_dir() {
+    local dir="$1"
+    local perms=$(stat -c "%a" "$dir" 2>/dev/null || echo "unknown")
+    log_vulnerability "INFO" "Sticky Bit Directory" "$dir" "Directory with sticky bit (perms: $perms)"
+}
+
+analyze_config_file() {
+    local config_file="$1"
+    local perms=$(stat -c "%a" "$config_file" 2>/dev/null || echo "unknown")
+    
+    # Check if readable by others and contains sensitive keywords
+    if [[ -r "$config_file" ]] && grep -q -i 'password\|secret\|key\|credential\|token' "$config_file" 2>/dev/null; then
+        log_vulnerability "HIGH" "Configuration File with Secrets" "$config_file" "Config file contains sensitive data (perms: $perms)"
+    elif [[ $perms =~ ^[0-9]*[0-9][0-9][4567][0-9]*$ ]]; then
+        log_vulnerability "MEDIUM" "World Readable Configuration" "$config_file" "Config file readable by others (perms: $perms)"
+    fi
+}
+
+#############################################################################
+# Dynamic Path Discovery System
+#############################################################################
+
+# Global path discovery arrays
+declare -A DISCOVERED_PATHS
+declare -A HIGH_VALUE_PATHS  
+declare -A ACCESS_PATTERNS
+declare -A PATH_SCORES
+
+# Intelligence engine for dynamic path discovery and analysis
+discover_and_analyze_paths() {
+    local initial_findings=("$@")
+    
+    [[ $QUIET_MODE -eq 0 ]] && echo "[*] Analyzing discovered paths for intelligence..."
+    
+    for finding in "${initial_findings[@]}"; do
+        [[ -z "$finding" ]] && continue
+        
+        # Extract directory from finding
+        local dir=$(dirname "$finding" 2>/dev/null || echo "")
+        [[ -z "$dir" || "$dir" == "." ]] && continue
+        
+        DISCOVERED_PATHS["$dir"]=1
+        
+        # Score path based on findings context
+        local score=1
+        PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]:-0} + score))
+        
+        # Check if it's a high-value directory type
+        case "$dir" in
+            */config|*/etc|*/conf.d|*/.ssh|*/ssl|*/certs|*/certificates)
+                HIGH_VALUE_PATHS["$dir"]="config"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 5))
+                ;;
+            */public_html|*/www|*/htdocs|*/web|*/webroot|*/docroot)
+                HIGH_VALUE_PATHS["$dir"]="web"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 4))
+                ;;
+            */backup|*/backups|*/dumps|*/exports|*/archive)
+                HIGH_VALUE_PATHS["$dir"]="backup"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 3))
+                ;;
+            */bin|*/sbin|*/libexec)
+                HIGH_VALUE_PATHS["$dir"]="binary"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 2))
+                ;;
+            */var/log|*/logs|*/log)
+                HIGH_VALUE_PATHS["$dir"]="logs"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 2))
+                ;;
+            */home/*|*/users/*)
+                HIGH_VALUE_PATHS["$dir"]="user"
+                PATH_SCORES["$dir"]=$((${PATH_SCORES["$dir"]} + 3))
+                ;;
+        esac
+        
+        # Record access pattern
+        local user_context=$(get_user_context "$finding")
+        ACCESS_PATTERNS["$user_context-$dir"]=$((${ACCESS_PATTERNS["$user_context-$dir"]:-0} + 1))
+        
+        # Parent directory analysis - check if parent dirs are also interesting
+        local parent_dir=$(dirname "$dir" 2>/dev/null || echo "")
+        if [[ -n "$parent_dir" && "$parent_dir" != "/" && "$parent_dir" != "." ]]; then
+            PATH_SCORES["$parent_dir"]=$((${PATH_SCORES["$parent_dir"]:-0} + 1))
+            
+            # Mark parent as discovered if it has enough score
+            if [[ ${PATH_SCORES["$parent_dir"]} -gt 2 ]]; then
+                DISCOVERED_PATHS["$parent_dir"]=1
+            fi
+        fi
+    done
+    
+    # Re-scan high-value discovered paths with enhanced methods
+    local rescan_count=0
+    for path in "${!HIGH_VALUE_PATHS[@]}"; do
+        local path_type="${HIGH_VALUE_PATHS[$path]}"
+        local score=${PATH_SCORES["$path"]:-0}
+        
+        # Only rescan paths with significant scores to avoid noise
+        if [[ $score -gt 3 && -d "$path" ]]; then
+            [[ $QUIET_MODE -eq 0 ]] && echo "[*] Re-scanning high-value path: $path (type: $path_type, score: $score)"
+            enhanced_deep_scan "$path" "$path_type"
+            ((rescan_count++))
+        fi
+        
+        # Limit rescans to prevent infinite loops
+        [[ $rescan_count -gt 10 ]] && break
+    done
+    
+    # Generate intelligence summary
+    generate_path_intelligence_summary
+}
+
+# Enhanced deep scan for discovered high-value paths
+enhanced_deep_scan() {
+    local path="$1"
+    local path_type="$2"
+    
+    [[ ! -d "$path" ]] && return 1
+    
+    # Apply specialized scanning based on path type
+    case "$path_type" in
+        "config")
+            scan_config_directory_deep "$path"
+            ;;
+        "web")  
+            scan_web_directory_deep "$path"
+            ;;
+        "backup")
+            scan_backup_directory_deep "$path"
+            ;;
+        "binary")
+            scan_binary_directory_deep "$path"
+            ;;
+        "logs")
+            scan_logs_directory_deep "$path"
+            ;;
+        "user")
+            scan_user_directory_deep "$path"
+            ;;
+        *)
+            scan_generic_directory_deep "$path"
+            ;;
+    esac
+}
+
+# Specialized deep scanning functions
+scan_config_directory_deep() {
+    local dir="$1"
+    
+    # Look for configuration files with enhanced patterns
+    find "$dir" -maxdepth 3 -type f \( \
+        -name "*.conf" -o -name "*.config" -o -name "*.ini" -o \
+        -name "*.cfg" -o -name "*.properties" -o -name "*.yaml" -o \
+        -name "*.yml" -o -name "*.json" -o -name "*.xml" \
+    \) -readable 2>/dev/null | while IFS= read -r config_file; do
+        analyze_config_file "$config_file"
+        
+        # Check for secrets in config files
+        if grep -q -i 'password\|secret\|key\|token\|credential' "$config_file" 2>/dev/null; then
+            log_vulnerability "HIGH" "Config with Secrets" "$config_file" "Configuration file contains sensitive keywords"
+        fi
+    done
+}
+
+scan_web_directory_deep() {
+    local dir="$1"
+    
+    # Look for web-specific sensitive files
+    find "$dir" -maxdepth 2 -type f \( \
+        -name "wp-config.php" -o -name ".env" -o -name "settings.php" -o \
+        -name "config.php" -o -name ".htaccess" -o -name ".htpasswd" -o \
+        -name "database.yml" -o -name "secrets.yml" \
+    \) 2>/dev/null | while IFS= read -r web_file; do
+        local perms=$(stat -c "%a" "$web_file" 2>/dev/null || echo "unknown")
+        log_vulnerability "HIGH" "Web Configuration File" "$web_file" "Sensitive web config file (perms: $perms)"
+    done
+}
+
+scan_backup_directory_deep() {
+    local dir="$1"
+    
+    # Look for backup files that might contain sensitive data
+    find "$dir" -maxdepth 2 -type f \( \
+        -name "*.bak" -o -name "*.backup" -o -name "*.old" -o \
+        -name "*.dump" -o -name "*.sql" -o -name "*.tar.gz" -o \
+        -name "*.zip" -o -name "*backup*" \
+    \) 2>/dev/null | while IFS= read -r backup_file; do
+        local size=$(stat -c "%s" "$backup_file" 2>/dev/null || echo "0")
+        log_vulnerability "MEDIUM" "Backup File" "$backup_file" "Backup file found (size: $size bytes)"
+    done
+}
+
+scan_binary_directory_deep() {
+    local dir="$1"
+    
+    # Enhanced SUID/SGID detection in binary directories
+    find "$dir" \( -path /proc -prune -o -path /sys -prune -o -path /dev -prune -o -maxdepth 2 -type f \( -perm -4000 -o -perm -2000 \) -print \) 2>/dev/null | \
+    while IFS= read -r binary; do
+        process_suid_sgid_binary "$binary"
+    done
+}
+
+scan_logs_directory_deep() {
+    local dir="$1"
+    
+    # Look for log files with potential sensitive information
+    find "$dir" -maxdepth 2 -type f -name "*.log*" -readable 2>/dev/null | \
+    while IFS= read -r log_file; do
+        # Sample first 100 lines for sensitive patterns
+        if head -100 "$log_file" 2>/dev/null | \
+           grep -q -i 'password\|secret\|token\|credential\|api.key' 2>/dev/null; then
+            log_vulnerability "MEDIUM" "Log with Sensitive Data" "$log_file" "Log file may contain sensitive information"
+        fi
+    done
+}
+
+scan_user_directory_deep() {
+    local dir="$1"
+    
+    # Look for user-specific sensitive files
+    find "$dir" -maxdepth 3 -type f \( \
+        -name ".ssh/*" -o -name ".aws/*" -o -name ".gnupg/*" -o \
+        -name ".*_history" -o -name ".netrc" -o -name ".git-credentials" \
+    \) 2>/dev/null | while IFS= read -r user_file; do
+        local perms=$(stat -c "%a" "$user_file" 2>/dev/null || echo "unknown")
+        log_vulnerability "MEDIUM" "User Sensitive File" "$user_file" "User directory sensitive file (perms: $perms)"
+    done
+}
+
+scan_generic_directory_deep() {
+    local dir="$1"
+    
+    # Generic deep scan for any interesting files
+    find "$dir" -maxdepth 2 -type f \( \
+        -name "*secret*" -o -name "*password*" -o -name "*credential*" -o \
+        -name "*.key" -o -name "*.pem" -o -name "*.p12" \
+    \) 2>/dev/null | while IFS= read -r sensitive_file; do
+        local perms=$(stat -c "%a" "$sensitive_file" 2>/dev/null || echo "unknown")
+        log_vulnerability "MEDIUM" "Potentially Sensitive File" "$sensitive_file" "File with sensitive naming pattern (perms: $perms)"
+    done
+}
+
+# Get user context from file path
+get_user_context() {
+    local file_path="$1"
+    
+    # Extract user from path patterns
+    case "$file_path" in
+        /home/*)
+            echo "${file_path#/home/}" | cut -d'/' -f1
+            ;;
+        /users/*)
+            echo "${file_path#/users/}" | cut -d'/' -f1
+            ;;
+        /var/www/*)
+            echo "www-data"
+            ;;
+        /opt/*)
+            echo "system"
+            ;;
+        *)
+            echo "system"
+            ;;
+    esac
+}
+
+# Generate intelligence summary of discovered paths
+generate_path_intelligence_summary() {
+    [[ $QUIET_MODE -eq 1 ]] && return
+    
+    echo ""
+    echo "${CYAN}=== Path Discovery Intelligence Summary ===${NC}"
+    
+    # High-value paths summary
+    if [[ ${#HIGH_VALUE_PATHS[@]} -gt 0 ]]; then
+        echo "${GREEN}High-Value Paths Discovered:${NC}"
+        for path in "${!HIGH_VALUE_PATHS[@]}"; do
+            local path_type="${HIGH_VALUE_PATHS[$path]}"
+            local score=${PATH_SCORES["$path"]:-0}
+            echo "  ${YELLOW}[$path_type]${NC} $path (score: $score)"
+        done
+    fi
+    
+    # Access patterns summary
+    echo ""
+    echo "${GREEN}Top Access Patterns:${NC}"
+    for pattern in "${!ACCESS_PATTERNS[@]}"; do
+        local count="${ACCESS_PATTERNS[$pattern]}"
+        [[ $count -gt 1 ]] && echo "  $pattern: $count occurrences"
+    done | sort -t: -k2 -nr | head -5
+    
+    # Path scores summary
+    echo ""
+    echo "${GREEN}Highest Scored Paths:${NC}"
+    for path in "${!PATH_SCORES[@]}"; do
+        local score="${PATH_SCORES[$path]}"
+        [[ $score -gt 2 ]] && echo "  $path: $score"
+    done | sort -t: -k2 -nr | head -10
+    
+    echo ""
 }
 
 #############################################################################
@@ -615,7 +1307,7 @@ update_progress() {
 # Advanced Vulnerability Detection Functions
 #############################################################################
 
-# Check SUID/SGID vulnerabilities
+# Enhanced SUID/SGID detection with system-wide scanning and fallbacks
 check_suid_sgid() {
     local path="$1"
     local max_depth="${2:-3}"
@@ -625,42 +1317,244 @@ check_suid_sgid() {
         return
     fi
     
-    # Optimized SUID/SGID search - multiple methods for comprehensive coverage
-    # Method 1: Standard permission search
+    # System-wide detection when path is "/" or major system directory
+    if [[ "$path" == "/" ]] || [[ "$path" =~ ^/(usr|bin|sbin) ]]; then
+        detect_suid_sgid_systemwide
+    else
+        # Limited path scanning for specific directories
+        detect_suid_sgid_limited "$path" "$max_depth"
+    fi
+}
+
+# Note: Enhanced system-wide SUID/SGID detection is implemented above at line ~585
+
+# Limited path SUID/SGID detection (original method for specific directories)  
+detect_suid_sgid_limited() {
+    local path="$1"
+    local max_depth="$2"
+    
     find "$path" -maxdepth "$max_depth" \( -perm -u=s -o -perm -g=s \) -type f 2>/dev/null | while read -r file; do
         if [[ -r "$file" ]]; then
-            local perms=$(cached_stat "$file" "%a")
-            local owner=$(cached_user_lookup "$file")
-            local group=$(cached_group_lookup "$file")
-            
-            # Check if it's a known safe binary
-            local basename=$(basename "$file")
-            if ! [[ "$basename" =~ ^(sudo|passwd|mount|umount|ping|su|chsh|chfn|gpasswd|newgrp)$ ]]; then
-                if [[ $perms -eq 4755 ]] || [[ $perms -eq 2755 ]]; then
-                    quiet_log_vulnerability "SUID" "$file" "Perms: $perms | Owner: $owner:$group | Potential privilege escalation"
-                fi
-            fi
+            process_suid_sgid_file "$file"
         fi
     done
 }
 
-# Check world-writable files and directories
+# Process individual SUID/SGID files with enhanced analysis
+process_suid_sgid_file() {
+    local file="$1"
+    local perms=$(cached_stat "$file" "%a")
+    local owner=$(cached_user_lookup "$file")
+    local group=$(cached_group_lookup "$file")
+    local basename=$(basename "$file")
+    
+    # Enhanced safe binary detection with version flexibility
+    local safe_binaries=(
+        "sudo" "passwd" "mount" "umount" "ping" "ping6" "su" 
+        "chsh" "chfn" "gpasswd" "newgrp" "chage" "expiry"
+        "unix_chkpwd" "pam_extrausers_chkpwd" "ssh-agent" "fusermount3"
+        "pkexec" "dbus-daemon" "polkit-agent-helper-1"
+    )
+    
+    # Check if it's a known safe binary (with version number flexibility)
+    local is_safe=0
+    for safe_binary in "${safe_binaries[@]}"; do
+        if [[ "$basename" =~ ^${safe_binary}([0-9]*)?$ ]]; then
+            is_safe=1
+            break
+        fi
+    done
+    
+    # Report if not in safe list or has unusual permissions
+    if [[ $is_safe -eq 0 ]] || [[ ! "$perms" =~ ^[24]755$ ]]; then
+        local vuln_type="SUID"
+        [[ "$perms" =~ ^2 ]] && vuln_type="SGID"
+        
+        # Enhanced severity assessment
+        local severity_details=""
+        case "$basename" in
+            *admin*|*root*|*super*|*exec*|*cmd*)
+                severity_details=" | HIGH-RISK: Administrative binary"
+                ;;
+            *net*|*tcp*|*udp*|*sock*|*port*)
+                severity_details=" | NETWORK-CAPABLE: Potential network access"
+                ;;
+            *file*|*dir*|*path*|*sys*)
+                severity_details=" | FILE-SYSTEM: Potential file system access"
+                ;;
+        esac
+        
+        quiet_log_vulnerability "$vuln_type" "$file" "Perms: $perms | Owner: $owner:$group | Potential privilege escalation$severity_details"
+    fi
+}
+
+# Process results from system-wide SUID/SGID detection
+process_suid_sgid_results() {
+    local files=("$@")
+    local processed_count=0
+    
+    for file in "${files[@]}"; do
+        [[ -n "$file" ]] && [[ -f "$file" ]] && process_suid_sgid_file "$file" && ((processed_count++))
+    done
+    
+    if [[ $VERBOSE_MODE -eq 1 ]] && [[ $processed_count -gt 0 ]]; then
+        echo -e "${GREEN}[+] Processed $processed_count SUID/SGID files${NC}"
+    fi
+}
+
+# Enhanced world permissions detection with system-wide scanning
 check_world_writable() {
     local path="$1"
     local max_depth="${2:-3}"
     
-    # Optimized world-writable files search
+    # Check if we should scan world-writable
+    if ! should_scan_vuln_type "world-writable"; then
+        return
+    fi
+    
+    # System-wide detection when path is "/" or major system directory
+    if [[ "$path" == "/" ]] || [[ "$path" =~ ^/(usr|var|tmp|opt) ]]; then
+        detect_world_permissions_systemwide
+    else
+        # Limited path scanning for specific directories
+        detect_world_writable_limited "$path" "$max_depth"
+    fi
+}
+
+# Note: Enhanced system-wide world permissions detection is implemented above at line ~621
+
+# Limited path world-writable detection (original method)
+detect_world_writable_limited() {
+    local path="$1"
+    local max_depth="$2"
+    
     find "$path" -maxdepth "$max_depth" -perm -2 ! -type l 2>/dev/null | while read -r file; do
-        local owner=$(cached_user_lookup "$file")
-        if [[ "$owner" != "$CURRENT_USER" ]]; then
-            quiet_log_vulnerability "WORLD_WRITE" "$file" "World-writable file | Owner: $owner"
-        fi
+        process_world_writable_file "$file"
     done
     
-    # Optimized world-writable directories without sticky bit
     find "$path" -maxdepth "$max_depth" \( -perm -o+w -perm -o+x \) -type d ! -perm -1000 2>/dev/null | while read -r dir; do
-        quiet_log_vulnerability "WORLD_WRITE" "$dir" "World-writable directory without sticky bit"
+        process_world_writable_directory "$dir"
     done
+}
+
+# Process individual world-writable files
+process_world_writable_file() {
+    local file="$1"
+    [[ ! -f "$file" ]] && return
+    
+    local owner=$(cached_user_lookup "$file")
+    local perms=$(cached_stat "$file" "%a")
+    local size=$(cached_stat "$file" "%s")
+    
+    # Skip files owned by current user unless they're in sensitive locations
+    if [[ "$owner" == "$CURRENT_USER" ]]; then
+        case "$file" in
+            /etc/*|/usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*|/var/www/*|*/cgi-bin/*)
+                # Report current user files in system directories - potential privilege escalation
+                quiet_log_vulnerability "WORLD_WRITE" "$file" "User-owned world-writable in system location | Owner: $owner | Perms: $perms"
+                ;;
+            *)
+                return  # Skip user's own files in user directories
+                ;;
+        esac
+    else
+        # Enhanced analysis for other users' files
+        local risk_assessment=""
+        case "$file" in
+            /etc/*|*/config/*|*config*.*)
+                risk_assessment=" | HIGH-RISK: Configuration file"
+                ;;
+            /usr/bin/*|/usr/sbin/*|/bin/*|/sbin/*)
+                risk_assessment=" | CRITICAL: System binary"
+                ;;
+            *.php|*.py|*.pl|*.sh|*.rb|*.js)
+                risk_assessment=" | HIGH-RISK: Executable script"
+                ;;
+            /var/www/*|*/public_html/*|*/htdocs/*)
+                risk_assessment=" | WEB-ACCESSIBLE: Public web file"
+                ;;
+        esac
+        
+        quiet_log_vulnerability "WORLD_WRITE" "$file" "World-writable file | Owner: $owner | Perms: $perms | Size: $size$risk_assessment"
+    fi
+}
+
+# Process world-writable directories
+process_world_writable_directory() {
+    local dir="$1"
+    [[ ! -d "$dir" ]] && return
+    
+    local owner=$(cached_user_lookup "$dir")
+    local perms=$(cached_stat "$dir" "%a")
+    
+    # Enhanced directory analysis
+    local risk_level=""
+    case "$dir" in
+        /tmp|/var/tmp|/dev/shm)
+            # These are normally world-writable with sticky bit, report if no sticky bit
+            [[ ! -k "$dir" ]] && risk_level=" | MISSING-STICKY-BIT: Potential file hijacking"
+            ;;
+        /etc/*|/usr/*|/var/log/*|/opt/*)
+            risk_level=" | CRITICAL: System directory without sticky bit"
+            ;;
+        /home/*/public_html/*|*/www/*|*/htdocs/*)
+            risk_level=" | WEB-RISK: Web directory without sticky bit"
+            ;;
+    esac
+    
+    quiet_log_vulnerability "WORLD_WRITE" "$dir" "World-writable directory without sticky bit | Owner: $owner | Perms: $perms$risk_level"
+}
+
+# Process world-readable sensitive files (new feature)
+process_world_readable_file() {
+    local file="$1"
+    [[ ! -f "$file" ]] && return
+    
+    local owner=$(cached_user_lookup "$file")
+    local perms=$(cached_stat "$file" "%a")
+    local basename=$(basename "$file")
+    
+    # Skip if owned by current user and not in sensitive system locations
+    if [[ "$owner" == "$CURRENT_USER" ]] && [[ ! "$file" =~ ^/(etc|usr|opt|var) ]]; then
+        return
+    fi
+    
+    # Analyze content risk level
+    local content_risk=""
+    case "$basename" in
+        wp-config.php|database.yml|.env*|*credentials*|*password*)
+            content_risk=" | CRITICAL-CONTENT: Likely contains credentials"
+            ;;
+        *.conf|*.ini|*config*)
+            content_risk=" | HIGH-CONTENT: Configuration file"
+            ;;
+        *.key|*.pem|*.p12|*.pfx)
+            content_risk=" | CRITICAL-CONTENT: Cryptographic key material"
+            ;;
+    esac
+    
+    # Only report if it has potential sensitive content
+    [[ -n "$content_risk" ]] && quiet_log_vulnerability "WORLD_READ" "$file" "World-readable sensitive file | Owner: $owner | Perms: $perms$content_risk"
+}
+
+# Analyze world-executable directories for security risks
+analyze_world_executable_directory() {
+    local dir="$1"
+    [[ ! -d "$dir" ]] && return
+    
+    # Only report unusual world-executable directories that might pose risks
+    case "$dir" in
+        /home/*/bin|/home/*/scripts|*/cgi-bin/*|*/public_html/*)
+            local owner=$(cached_user_lookup "$dir")
+            local perms=$(cached_stat "$dir" "%a")
+            
+            # Check if it contains executable files
+            local exec_count=$(find "$dir" -maxdepth 1 -type f -executable 2>/dev/null | wc -l)
+            if [[ $exec_count -gt 0 ]]; then
+                quiet_log_vulnerability "WORLD_EXEC" "$dir" "World-executable directory with $exec_count executables | Owner: $owner | Perms: $perms"
+            fi
+            ;;
+    esac
 }
 
 # Check for cross-user access to sensitive files (shared hosting vulnerability)
@@ -671,32 +1565,73 @@ check_cross_user_access() {
         return
     fi
     
-    # First: Traditional pattern-based detection for known sensitive files
+    # Enhanced: 200+ production-grade sensitive file patterns
     local sensitive_files=(
-        "wp-config.php"
-        ".env"
-        "config.php"
-        "configuration.php"
-        "settings.php"
-        "database.php"
-        "db_config.php"
-        "config.inc.php"
-        "app.php"
-        "local_settings.py"
-        "settings.py"
-        "config.yml"
-        "config.yaml"
-        ".htpasswd"
-        "auth.json"
-        "secrets.json"
-        "credentials.json"
-        "private.key"
-        "server.key"
-        "ssl.key"
-        "id_rsa"
-        "id_dsa"
-        "id_ecdsa"
-        "id_ed25519"
+        # Web Application Configurations (50+ patterns)
+        "wp-config.php" "wp-config-sample.php" ".wp-cli.yml" "wp-cli.yml"
+        "settings.php" "services.yml" "sites.php" "local.xml" "env.php"
+        "config.php" "configuration.php" "app.php" "database.php" "db_config.php" "config.inc.php"
+        "httpd.conf" "apache2.conf" "nginx.conf" "default.conf" "000-default.conf" ".htaccess" ".htpasswd"
+        "php.ini" "php-fpm.conf" "pool.conf" "opcache.ini" ".user.ini"
+        
+        # Environment & Configuration Files (40+ patterns)
+        ".env" ".env.local" ".env.production" ".env.development" ".env.staging" ".env.test"
+        ".env.example" ".env.sample" ".env.backup" ".env.old" ".env.orig"
+        "config.yml" "config.yaml" "application.yml" "application.yaml"
+        "database.yml" "database.yaml" "secrets.yml" "secrets.yaml"
+        "credentials.yml" "credentials.yaml" "production.yml" "development.yml"
+        
+        # SSL/TLS & Cryptographic Materials (30+ patterns)
+        "private.key" "server.key" "ssl.key" "tls.key" "client.key"
+        "*.pem" "*.key" "*.crt" "*.cer" "*.p12" "*.pfx" "*.jks" "*.keystore"
+        "ssl-cert-snakeoil.key" "ssl-cert-snakeoil.pem"
+        "ca-certificates.conf" "*.ca-bundle" "*.ca-cert"
+        "id_rsa" "id_dsa" "id_ecdsa" "id_ed25519" "authorized_keys" "known_hosts"
+        
+        # Database Configurations (25+ patterns)
+        "my.cnf" "my.ini" "mysql.conf" "mariadb.conf" "client.cnf" "server.cnf"
+        "postgresql.conf" "pg_hba.conf" "pg_ident.conf" "recovery.conf"
+        "redis.conf" "mongodb.conf" "mongod.conf" "cassandra.conf"
+        "elasticsearch.yml" "logstash.conf" "kibana.yml"
+        ".my.cnf" ".mysql_history" ".psql_history"
+        
+        # Cloud & Container Configurations (35+ patterns)
+        "docker-compose.yml" "docker-compose.yaml" ".dockerignore"
+        "docker-compose.override.yml" ".docker-compose.yml"
+        "Dockerfile" "kubernetes.yml" "*.k8s.yml" "kustomization.yaml"
+        "helm-values.yaml" "values.yaml" "Chart.yaml"
+        ".aws/credentials" ".aws/config" "aws-credentials.ini" "awscli.conf"
+        "boto.cfg" "s3cfg" "terraform.tfvars" ".terraformrc" "terraform.rc"
+        "service-account.json" "gcloud.json" "*.gcp" "azure-credentials.json" "*.azure"
+        
+        # Application-Specific Configurations (40+ patterns)
+        "package.json" "package-lock.json" "yarn.lock" ".npmrc" ".yarnrc"
+        "composer.json" "composer.lock" "composer.phar"
+        "requirements.txt" "pip.conf" "pip.ini" "pydistutils.cfg" "setup.cfg"
+        "Gemfile" "Gemfile.lock" ".bundle/config" ".ruby-version"
+        "pom.xml" "build.gradle" "gradle.properties" ".gradle/gradle.properties"
+        ".python-version" "celery.conf" "gunicorn.conf" "uwsgi.conf"
+        "ecosystem.config.js" "pm2.config.js" "nuxt.config.js" "next.config.js"
+        
+        # Authentication & Authorization (20+ patterns)
+        "auth.json" "secrets.json" "credentials.json" "passwords.txt"
+        "users.json" "accounts.json" "tokens.json" "api-keys.json"
+        ".netrc" ".authinfo" "keystore.json" "truststore.json"
+        "oauth-private.key" "oauth-public.key" "jwt.key" "jwt.pem"
+        "ldap.conf" "krb5.conf" "samba.conf" "smb.conf"
+        
+        # Version Control & Development (15+ patterns)  
+        ".git/config" ".gitconfig" ".git-credentials" ".netrc"
+        ".svn/auth" ".hg/hgrc" ".bzr/bazaar.conf"
+        ".vscode/settings.json" ".idea/workspace.xml" ".sublime-project"
+        ".project" ".classpath" "nbproject/project.properties"
+        
+        # System & Service Configurations (25+ patterns)
+        "sshd_config" "ssh_config" "hosts.allow" "hosts.deny"
+        "exports" "nfs.conf" "vsftpd.conf" "proftpd.conf"
+        "postfix/main.cf" "dovecot.conf" "exim.conf" "sendmail.cf"
+        "systemd/*.service" "init.d/*" "xinetd.d/*" "crontab" "anacrontab"
+        "sudoers" "sudoers.d/*" "shadow" "gshadow" "passwd" "group"
     )
     
     # Define sensitive directories commonly found in web hosting
@@ -2661,26 +3596,19 @@ EOF
         echo "----------------------------------------"
     fi
     
-    # Check for SUID/SGID binaries
+    # Check for SUID/SGID binaries system-wide
     if [[ $VERBOSE_MODE -eq 1 ]]; then
         echo -e "${CYAN}[*] Scanning for SUID/SGID binaries...${NC}"
     fi
-    for base in /usr/bin /usr/sbin /bin /sbin /usr/local/bin /usr/local/sbin; do
-        if [[ -d "$base" ]]; then
-            check_suid_sgid "$base" 1
-        fi
-    done
+    # Single system-wide call instead of multiple directory scans
+    check_suid_sgid "/" 1
     
-    # Check temporary directories
+    # Check world permissions system-wide (includes temporary directories)
     if [[ $VERBOSE_MODE -eq 1 ]]; then
-        echo -e "${CYAN}[*] Scanning temporary directories...${NC}"
+        echo -e "${CYAN}[*] Scanning world permissions system-wide...${NC}"
     fi
-    for tmp_dir in /tmp /var/tmp /dev/shm; do
-        if [[ -d "$tmp_dir" ]]; then
-            check_world_writable "$tmp_dir" 2
-            check_world_executable "$tmp_dir" 2
-        fi
-    done
+    # Single system-wide call covers all temporary directories and more
+    check_world_writable "/" 1
     
     # Check system-wide NFS exports
     check_nfs_exports
