@@ -53,6 +53,7 @@ echo "$(date +%s)" > "$TEMP_DIR/start_time"
 
 # Performance monitoring
 SCAN_START_TIME=$(date +%s)
+LAST_SCREEN_CLEAR=0  # Track when screen was last cleared
 declare -A USER_CACHE
 declare -A GROUP_CACHE
 declare -A PERM_CACHE
@@ -880,9 +881,16 @@ scan_config_directory_deep() {
         -name "*.cfg" -o -name "*.properties" -o -name "*.yaml" -o \
         -name "*.yml" -o -name "*.json" -o -name "*.xml" \
     \) -readable 2>/dev/null | while IFS= read -r config_file; do
-        # Update worker heartbeat during file processing
+        # Update worker heartbeat and user timestamp during file processing
         local worker_heartbeat="$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat"
         echo "$(date +%s)" > "$worker_heartbeat" 2>/dev/null
+        
+        # Update user activity timestamp
+        if [[ -n "${WORKER_ID:-}" ]] && [[ -f "$TEMP_DIR/current_user_${WORKER_ID}" ]]; then
+            local user_data=$(cat "$TEMP_DIR/current_user_${WORKER_ID}" 2>/dev/null)
+            local username="${user_data%:*}"
+            echo "$username:$(date +%s)" > "$TEMP_DIR/current_user_${WORKER_ID}"
+        fi
         
         analyze_config_file "$config_file"
         
@@ -1072,12 +1080,9 @@ show_progress_bar() {
         printf " ${YELLOW}%s${NC}" "$files_info"
     fi
     
-    # Force output to display immediately
+    # Force output to display immediately and add newline
     tput el  # Clear to end of line
-    
-    if [[ $current -eq $total ]]; then
-        echo ""  # New line when complete
-    fi
+    echo ""  # Always add newline to prevent overlap with other output
 }
 
 # Professional scanning dashboard
@@ -1146,16 +1151,10 @@ show_dashboard() {
     
     # Show dashboard 
     if [[ $SHOW_PROGRESS -eq 1 ]]; then
-        # Use cursor positioning instead of clearing screen to prevent flickering
-        if [[ $QUIET_MODE -eq 1 ]]; then
-            # Move cursor up to overwrite previous dashboard
-            printf "\033[10A\033[2K"
-        else
-            # Move cursor to top and clear previous content
-            printf "\033[H\033[10J"
-        fi
+        # Dashboard content only - screen clearing handled elsewhere
+        local update_time=$(date "+%H:%M:%S")
         echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${CYAN}║                    ${WHITE}FILESPECTRE${NC}${CYAN}                            ║${NC}"
+        echo -e "${CYAN}║                    ${WHITE}FILESPECTRE${NC}${CYAN} - Updated: ${WHITE}$update_time${NC}${CYAN}           ║${NC}"
         echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
         printf "${CYAN}║${NC} Current User: ${GREEN}%-20s${NC} ${CYAN}│${NC} Total Users: ${BLUE}%6d${NC} ${CYAN}║${NC}\n" "$current_user" "$total_users"
         printf "${CYAN}║${NC} Processed:    ${YELLOW}%-20d${NC} ${CYAN}│${NC} Remaining:   ${BLUE}%6d${NC} ${CYAN}║${NC}\n" "$processed_users" "$((total_users - processed_users))"
@@ -1187,8 +1186,11 @@ quiet_log_vulnerability() {
     # Only show CRITICAL and HIGH vulnerabilities in quiet mode
     if [[ $QUIET_MODE -eq 1 ]]; then
         if [[ "$severity" == "CRITICAL" ]] || [[ "$severity" == "HIGH" ]]; then
-            # Clear current line and print vulnerability, then allow progress bar to update
-            printf "\033[2K\r"
+            # Check if screen was recently cleared, if not clear current line
+            local current_time=$(date +%s)
+            if [[ $((current_time - LAST_SCREEN_CLEAR)) -gt 2 ]]; then
+                printf "\033[2K\r"
+            fi
             echo -e "  ${RED}[$severity]${NC} ${YELLOW}$vuln_type${NC}: $file_path"
         fi
     else
@@ -2496,6 +2498,13 @@ deep_scan_directory() {
     local worker_heartbeat="$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat"
     echo "$(date +%s)" > "$worker_heartbeat" 2>/dev/null
     
+    # Update user activity timestamp if worker ID is available
+    if [[ -n "${WORKER_ID:-}" ]] && [[ -f "$TEMP_DIR/current_user_${WORKER_ID}" ]]; then
+        local user_data=$(cat "$TEMP_DIR/current_user_${WORKER_ID}" 2>/dev/null)
+        local username="${user_data%:*}"
+        echo "$username:$(date +%s)" > "$TEMP_DIR/current_user_${WORKER_ID}"
+    fi
+    
     # Check if this path should be scanned
     if ! should_scan_path "$dir"; then
         echo -e "${YELLOW}[*] Skipping excluded path: $dir${NC}"
@@ -2667,8 +2676,8 @@ scan_worker() {
     # Set worker ID for heartbeat tracking
     export WORKER_ID="$worker_id"
     
-    # Update current user being processed by this worker
-    echo "$username" > "$TEMP_DIR/current_user"
+    # Update current user being processed by this worker with timestamp
+    echo "$username:$(date +%s)" > "$TEMP_DIR/current_user_${worker_id}"
     
     # Initialize per-user file counters
     echo "0" > "$TEMP_DIR/user_${worker_id}_files_scanned"
@@ -2723,6 +2732,7 @@ scan_worker() {
     rm -f "$TEMP_DIR/worker_${WORKER_ID:-0}_heartbeat" 2>/dev/null
     rm -f "$TEMP_DIR/user_${WORKER_ID:-0}_files_scanned" 2>/dev/null
     rm -f "$TEMP_DIR/user_${WORKER_ID:-0}_files_total" 2>/dev/null
+    rm -f "$TEMP_DIR/current_user_${WORKER_ID:-0}" 2>/dev/null
 }
 
 # Parallel scan manager
@@ -2763,8 +2773,7 @@ parallel_scan() {
         
         IFS=':' read -r username user_home <<< "$user_data"
         
-        # Track current user being processed
-        echo "$username" > "$TEMP_DIR/current_user"
+        # Track current user being processed (legacy - workers handle this now)
         
         # Show dashboard in quiet mode (update more frequently)
         if [[ $QUIET_MODE -eq 1 ]] && [[ $((job_count % 3)) -eq 0 ]] && [[ $job_count -gt 1 ]]; then
@@ -2895,32 +2904,70 @@ parallel_scan() {
                 fi
             fi
             
-            # Only update progress every 4 seconds to prevent clearing messages too quickly
+            # Check for periodic screen clearing every 15 seconds
             local current_time=$(date +%s)
-            if [[ $((current_time - last_progress_update)) -ge 4 ]]; then
+            local should_clear_screen=0
+            
+            if [[ $((current_time - LAST_SCREEN_CLEAR)) -ge 15 ]]; then
+                should_clear_screen=1
+                LAST_SCREEN_CLEAR=$current_time
+            fi
+            
+            # Update progress every 4 seconds or when clearing screen
+            if [[ $((current_time - last_progress_update)) -ge 4 ]] || [[ $should_clear_screen -eq 1 ]]; then
                 # Get file progress info and current user
                 local current_files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
                 local current_vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
-                local current_user=$(cat "$TEMP_DIR/current_user" 2>/dev/null || echo "...")
                 
-                # Try to get per-user progress if available
+                # Find the most recently active user and their progress
+                local current_user="..."
                 local user_progress=""
-                for worker_file in "$TEMP_DIR"/user_*_files_total; do
-                    if [[ -f "$worker_file" ]]; then
-                        local worker_total=$(cat "$worker_file" 2>/dev/null || echo "0")
-                        local worker_id=$(basename "$worker_file" | sed 's/user_\(.*\)_files_total/\1/')
-                        local worker_scanned=$(cat "$TEMP_DIR/user_${worker_id}_files_scanned" 2>/dev/null || echo "0")
-                        if [[ "$worker_total" -gt 0 ]]; then
-                            local user_percent=$((worker_scanned * 100 / worker_total))
-                            user_progress="($user_percent%)"
-                            break
+                local latest_timestamp=0
+                
+                for user_file in "$TEMP_DIR"/current_user_*; do
+                    if [[ -f "$user_file" ]]; then
+                        local user_data=$(cat "$user_file" 2>/dev/null)
+                        local worker_id=$(basename "$user_file" | sed 's/current_user_//')
+                        local username="${user_data%:*}"
+                        local timestamp="${user_data##*:}"
+                        
+                        # Check if this is the most recent
+                        if [[ "$timestamp" -gt "$latest_timestamp" ]]; then
+                            latest_timestamp="$timestamp"
+                            current_user="$username"
+                            
+                            # Get progress for this user
+                            local worker_total=$(cat "$TEMP_DIR/user_${worker_id}_files_total" 2>/dev/null || echo "0")
+                            local worker_scanned=$(cat "$TEMP_DIR/user_${worker_id}_files_scanned" 2>/dev/null || echo "0")
+                            if [[ "$worker_total" -gt 0 ]]; then
+                                local user_percent=$((worker_scanned * 100 / worker_total))
+                                user_progress="($user_percent%)"
+                            fi
                         fi
                     fi
                 done
                 
                 local files_info="F:$current_files V:$current_vulns U:$current_user$user_progress"
                 
-                show_progress_bar "$processed" "$total_users" "Processing remaining users..." "$files_info"
+                # Clear screen and show dashboard every 15 seconds
+                if [[ $should_clear_screen -eq 1 ]]; then
+                    clear
+                    # Calculate scan speed
+                    local elapsed=$((current_time - SCAN_START_TIME))
+                    local scan_speed="0"
+                    if [[ $elapsed -gt 2 ]] && [[ $current_files -gt 0 ]]; then
+                        scan_speed=$((current_files / elapsed))
+                    fi
+                    
+                    # Show dashboard with current stats
+                    show_dashboard "$current_user" "$total_users" "$processed" "$current_vulns" "$scan_speed"
+                    echo ""
+                    echo -e "${CYAN}[*] Recent Activity:${NC}"
+                else
+                    # Regular progress bar update
+                    show_progress_bar "$processed" "$total_users" "Processing remaining users..." "$files_info"
+                fi
+                
                 last_progress_update=$current_time
             fi
             
