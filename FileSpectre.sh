@@ -35,6 +35,7 @@ EXCLUDE_EXTENSIONS=()
 SCAN_TYPES=("all")
 RESUME_FILE=""
 ENABLE_RESUME=0
+SKIP_CROSS_USER=0         # 0 = enabled, 1 = skip cross-user checking
 
 # User sampling configuration
 MAX_USERS=0           # 0 = no limit, N = max N users
@@ -509,6 +510,25 @@ generate_find_exclusions() {
     echo "$exclude_patterns"
 }
 
+# Generate minimal exclusions for world permissions (only /proc and /dev)
+generate_world_permissions_exclusions() {
+    local exclude_patterns=""
+    
+    # Only exclude /proc and /dev for world permissions
+    exclude_patterns="-path /proc -prune -o -path /dev -prune"
+    
+    # Add user-specified exclude paths
+    if [[ ${#EXCLUDE_PATHS[@]} -gt 0 ]]; then
+        for exclude_path in "${EXCLUDE_PATHS[@]}"; do
+            # Ensure path starts with /
+            [[ "$exclude_path" != /* ]] && exclude_path="/$exclude_path"
+            exclude_patterns="$exclude_patterns -o -path $exclude_path -prune"
+        done
+    fi
+    
+    echo "$exclude_patterns"
+}
+
 # Generate find command with proper exclusions and search criteria
 build_find_command() {
     local search_path="$1"
@@ -606,11 +626,11 @@ detect_suid_sgid_systemwide() {
     local results=()
     local temp_file="/tmp/suid_sgid_results_$$"
     
-    # Method 1: Combined SUID/SGID detection with proper syntax
-    local exclusions=$(generate_find_exclusions)
+    # Method 1: Combined SUID/SGID detection with minimal exclusions
+    local exclusions=$(generate_world_permissions_exclusions)
     local method1="find / $exclusions -o -perm -4000 -o -perm -2000 -type f -print 2>/dev/null > '$temp_file.combined'"
     
-    # Method 2: Alternative perm syntax  
+    # Method 2: Alternative perm syntax with minimal exclusions
     local method2="find / $exclusions -o -perm -u=s -o -perm -g=s -type f -print 2>/dev/null > '$temp_file.alt'"
     
     # Method 3: Directory-based search using common binary locations
@@ -646,17 +666,17 @@ detect_suid_sgid_systemwide() {
 detect_world_permissions_systemwide() {
     local temp_file="/tmp/world_perms_results_$$"
     
-    # Method 1: Standard world-writable detection
-    local exclusions=$(generate_find_exclusions)
+    # Method 1: Standard world-writable detection (minimal exclusions)
+    local exclusions=$(generate_world_permissions_exclusions)
     local method1="find / \\( $exclusions -o -perm -2 ! -type l -ls -print \\) 2>/dev/null > '$temp_file.writable'"
     
-    # Method 2: Alternative world-writable syntax
+    # Method 2: Alternative world-writable syntax (minimal exclusions)
     local method2="find / \\( $exclusions -o -perm -o+w ! -type l -ls -print \\) 2>/dev/null > '$temp_file.writable_alt'"
     
     # Method 3: World-readable sensitive files (focus on common sensitive locations)
     local method3="find /etc /home /root /var /opt \\( $exclusions -o -perm -o+r -type f -print \\) 2>/dev/null | grep -E '\\.(conf|config|ini|key|pem|crt)$' > '$temp_file.readable'"
     
-    # Method 4: Sticky bit analysis
+    # Method 4: Sticky bit analysis (minimal exclusions)
     local method4="find / \\( $exclusions -o -perm -1000 -type d -print \\) 2>/dev/null > '$temp_file.sticky'"
     
     if universal_vulnerability_detector "World Permissions" "$method1" "$method2" "$method3" "$method4"; then
@@ -1644,6 +1664,11 @@ analyze_world_executable_directory() {
 check_cross_user_access() {
     local path="$1"
     
+    # Skip cross-user checking if disabled
+    if [[ $SKIP_CROSS_USER -eq 1 ]]; then
+        return
+    fi
+    
     if ! should_scan_vuln_type "config-files"; then
         return
     fi
@@ -1841,6 +1866,11 @@ check_cross_user_access() {
 # Systematic cross-user access detection - mirrors current user's structure to other users
 perform_systematic_cross_user_check() {
     local scan_path="$1"
+    
+    # Skip cross-user checking if disabled
+    if [[ $SKIP_CROSS_USER -eq 1 ]]; then
+        return
+    fi
     
     if [[ $VERBOSE_MODE -eq 1 ]]; then
         echo -e "${CYAN}[*] Performing systematic cross-user structure analysis...${NC}"
@@ -2403,7 +2433,8 @@ check_cron_jobs() {
                 if [[ -r "$file" ]]; then
                     local perms=$(stat -c '%a' "$file" 2>/dev/null)
                     if [[ "${perms:1:1}" -ge 2 ]] || [[ "${perms:2:1}" -ge 2 ]]; then
-                        log_vulnerability "CRON_JOBS" "$file" "Cron job with write permissions | Perms: $perms"
+                        local owner=$(stat -c '%U' "$file" 2>/dev/null)
+                        log_vulnerability "CRON_JOBS" "$file" "Cron job with group/other write permissions (owner: $owner can modify) | Perms: $perms"
                         echo -e "${RED}[!] WRITABLE CRON JOB: $file${NC}"
                     fi
                 fi
@@ -2662,16 +2693,46 @@ deep_scan_directory() {
     done
     
     # Check for other vulnerability types based on scan types
-    check_suid_sgid "$dir" 2
-    check_world_writable "$dir" 2
-    check_world_executable "$dir" 2
-    check_root_owned "$dir" 2
-    check_capabilities "$dir"
-    check_acl "$dir"
-    check_ssh_keys "$dir"
-    check_database_files "$dir"
-    check_log_files "$dir"
-    check_cross_user_access "$dir"
+    # Only call detection functions for enabled scan types
+    if should_scan_vuln_type "suid" || should_scan_vuln_type "sgid"; then
+        check_suid_sgid "$dir" 2
+    fi
+    
+    if should_scan_vuln_type "world-writable" || should_scan_vuln_type "world-readable"; then
+        check_world_writable "$dir" 2
+    fi
+    
+    if should_scan_vuln_type "world-executable"; then
+        check_world_executable "$dir" 2
+    fi
+    
+    if should_scan_vuln_type "root-privileges"; then
+        check_root_owned "$dir" 2
+    fi
+    
+    if should_scan_vuln_type "capabilities"; then
+        check_capabilities "$dir"
+    fi
+    
+    if should_scan_vuln_type "acl"; then
+        check_acl "$dir"
+    fi
+    
+    if should_scan_vuln_type "ssh"; then
+        check_ssh_keys "$dir"
+    fi
+    
+    if should_scan_vuln_type "database"; then
+        check_database_files "$dir"
+    fi
+    
+    if should_scan_vuln_type "logs"; then
+        check_log_files "$dir"
+    fi
+    
+    if should_scan_vuln_type "config-files"; then
+        check_cross_user_access "$dir"
+    fi
 }
 
 # Intelligent probing for traverse-only directories
@@ -3710,6 +3771,10 @@ main() {
                 AUTO_SCALE_THREADS=0
                 shift
                 ;;
+            --skip-cross-user)
+                SKIP_CROSS_USER=1
+                shift
+                ;;
             --max-users)
                 MAX_USERS="$2"
                 shift 2
@@ -3792,6 +3857,7 @@ Output Control:
   -v, --verbose               Verbose mode - show all vulnerabilities and detailed output
   --no-progress               Disable progress dashboard and bars
   --no-auto-scale             Disable automatic thread scaling based on CPU cores
+  --skip-cross-user           Skip cross-user access checking (performance optimization)
 
 Help:
   -h, --help                  Show this help message
@@ -3823,6 +3889,9 @@ Examples:
   
   # Resume a previous scan
   $0 --resume ./scan_state_20241201_120000
+  
+  # Fast scan with cross-user checking disabled for performance
+  $0 --skip-cross-user --threads 20 --quick
 EOF
                 exit 0
                 ;;
@@ -3965,30 +4034,108 @@ EOF
     
     # Skip system-wide scans if include-paths is specified (performance optimization)
     if [[ ${#INCLUDE_PATHS[@]} -eq 0 ]]; then
-        # Check for SUID/SGID binaries system-wide
-        if [[ $VERBOSE_MODE -eq 1 ]]; then
-            echo -e "${CYAN}[*] Scanning for SUID/SGID binaries...${NC}"
+        # Enhanced SUID/SGID detection system-wide
+        if should_scan_vuln_type "suid" || should_scan_vuln_type "sgid"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning for SUID/SGID binaries...${NC}"
+            fi
+            detect_suid_sgid_systemwide
         fi
-        # Single system-wide call instead of multiple directory scans
-        check_suid_sgid "/" 1
         
-        # Check world permissions system-wide (includes temporary directories)
-        if [[ $VERBOSE_MODE -eq 1 ]]; then
-            echo -e "${CYAN}[*] Scanning world permissions system-wide...${NC}"
+        # Enhanced world permissions detection system-wide
+        if should_scan_vuln_type "world-writable" || should_scan_vuln_type "world-readable"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning world permissions system-wide...${NC}"
+            fi
+            detect_world_permissions_systemwide
         fi
-        # Single system-wide call covers all temporary directories and more
-        check_world_writable "/" 1
+        
+        # Check world executable files system-wide
+        if should_scan_vuln_type "world-executable"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning world executable files...${NC}"
+            fi
+            check_world_executable "/" 2
+        fi
+        
+        # Check for root-owned files system-wide
+        if should_scan_vuln_type "root-privileges"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning root-owned files...${NC}"
+            fi
+            check_root_owned "/" 2
+        fi
+        
+        # Check for capabilities system-wide
+        if should_scan_vuln_type "capabilities"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning file capabilities...${NC}"
+            fi
+            check_capabilities "/"
+        fi
+        
+        # Check for SSH keys system-wide
+        if should_scan_vuln_type "ssh"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning SSH keys...${NC}"
+            fi
+            check_ssh_keys "/"
+        fi
+        
+        # Check for database files system-wide
+        if should_scan_vuln_type "database"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning database files...${NC}"
+            fi
+            check_database_files "/"
+        fi
+        
+        # Check for log files system-wide
+        if should_scan_vuln_type "logs"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning log files...${NC}"
+            fi
+            check_log_files "/"
+        fi
+        
+        # Check for ACL misconfigurations system-wide
+        if should_scan_vuln_type "acl"; then
+            if [[ $VERBOSE_MODE -eq 1 ]]; then
+                echo -e "${CYAN}[*] Scanning ACL configurations...${NC}"
+            fi
+            check_acl "/"
+        fi
+        
     else
         if [[ $VERBOSE_MODE -eq 1 ]]; then
             echo -e "${YELLOW}[*] Skipping system-wide scans (include-paths specified)${NC}"
         fi
     fi
     
+    # System-wide checks that don't depend on include-paths
     # Check system-wide NFS exports
-    check_nfs_exports
+    if should_scan_vuln_type "nfs"; then
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${CYAN}[*] Scanning NFS exports...${NC}"
+        fi
+        check_nfs_exports
+    fi
     
     # Check system cron jobs
-    check_cron_jobs
+    if should_scan_vuln_type "cron"; then
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${CYAN}[*] Scanning cron jobs...${NC}"
+        fi
+        check_cron_jobs
+    fi
+    
+    # Enhanced system-wide config file detection
+    if should_scan_vuln_type "config-files"; then
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${CYAN}[*] Scanning configuration files...${NC}"
+        fi
+        detect_config_files_systemwide
+    fi
     
     # Phase 4: Generate Reports
     if [[ $QUIET_MODE -eq 1 ]]; then
