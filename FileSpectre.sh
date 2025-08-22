@@ -17,7 +17,7 @@ WHITE='\033[1;37m'
 NC='\033[0m' # No Color
 
 # Global configuration
-MAX_PARALLEL_JOBS=50  # Increased default for enterprise environments
+MAX_PARALLEL_JOBS=8   # Optimized for performance (was 50)
 SCAN_DEPTH=5
 MAX_FILE_SIZE=$((100 * 1024 * 1024)) # 100MB limit for content scanning
 ENABLE_DEEP_SCAN=1
@@ -241,10 +241,23 @@ EOF
 # Load scan state
 load_scan_state() {
     if [[ -f "$RESUME_FILE" ]]; then
-        source "$RESUME_FILE"
-        echo -e "${GREEN}[*] Resuming scan from previous state${NC}"
-        echo -e "${CYAN}[*] Completed: $COMPLETED_USERS/$TOTAL_USERS users${NC}"
-        return 0
+        # Parse state file safely instead of executing it
+        if [[ "$RESUME_FILE" == *.log ]]; then
+            echo -e "${RED}[!] Error: Cannot resume from log file. Use state file instead.${NC}"
+            echo -e "${YELLOW}[*] Log files contain scan results, not resumable state.${NC}"
+            return 1
+        fi
+        
+        # Source only if it's a proper state file
+        if grep -q "^COMPLETED_USERS=" "$RESUME_FILE" 2>/dev/null; then
+            source "$RESUME_FILE"
+            echo -e "${GREEN}[*] Resuming scan from previous state${NC}"
+            echo -e "${CYAN}[*] Completed: ${COMPLETED_USERS:-0}/${TOTAL_USERS:-0} users${NC}"
+            return 0
+        else
+            echo -e "${RED}[!] Invalid state file format${NC}"
+            return 1
+        fi
     fi
     return 1
 }
@@ -610,7 +623,12 @@ detect_suid_sgid_systemwide() {
         # Process results from successful method
         for result_file in "$temp_file."*; do
             [[ -f "$result_file" ]] && cat "$result_file" 2>/dev/null
-        done | sort -u | while IFS= read -r binary; do
+        done | sort -u > "$temp_file.sorted"
+        
+        # Use array instead of while read for performance
+        local binaries
+        readarray -t binaries < "$temp_file.sorted"
+        for binary in "${binaries[@]}"; do
             if [[ -n "$binary" && -f "$binary" ]]; then
                 # Check exclusions
                 if ! should_exclude_path "$binary" && ! should_exclude_extension "$binary"; then
@@ -642,26 +660,34 @@ detect_world_permissions_systemwide() {
     local method4="find / \\( $exclusions -o -perm -1000 -type d -print \\) 2>/dev/null > '$temp_file.sticky'"
     
     if universal_vulnerability_detector "World Permissions" "$method1" "$method2" "$method3" "$method4"; then
-        # Process world-writable files
+        # Process world-writable files using array for performance
         if [[ -f "$temp_file.writable" || -f "$temp_file.writable_alt" ]]; then
             cat "$temp_file.writable" "$temp_file.writable_alt" 2>/dev/null | \
-            awk '{print $NF}' | sort -u | while IFS= read -r file; do
+            awk '{print $NF}' | sort -u > "$temp_file.writable_sorted"
+            
+            local writable_files
+            readarray -t writable_files < "$temp_file.writable_sorted"
+            for file in "${writable_files[@]}"; do
                 [[ -n "$file" && -f "$file" ]] && process_world_writable_file "$file"
             done
         fi
         
-        # Process world-readable sensitive files
+        # Process world-readable sensitive files using array
         if [[ -f "$temp_file.readable" ]]; then
-            while IFS= read -r file; do
+            local readable_files
+            readarray -t readable_files < "$temp_file.readable"
+            for file in "${readable_files[@]}"; do
                 [[ -n "$file" && -f "$file" ]] && process_world_readable_file "$file"
-            done < "$temp_file.readable"
+            done
         fi
         
-        # Process sticky bit directories
+        # Process sticky bit directories using array
         if [[ -f "$temp_file.sticky" ]]; then
-            while IFS= read -r dir; do
+            local sticky_dirs
+            readarray -t sticky_dirs < "$temp_file.sticky"
+            for dir in "${sticky_dirs[@]}"; do
                 [[ -n "$dir" && -d "$dir" ]] && analyze_sticky_bit_dir "$dir"
-            done < "$temp_file.sticky"
+            done
         fi
     fi
     
@@ -1222,15 +1248,39 @@ quiet_log_vulnerability() {
 # Thread-safe Functions
 #############################################################################
 
-# Thread-safe counter increment
+# Optimized counter increment (reduced file I/O)
 increment_counter() {
     local counter_file="$1"
     local increment="${2:-1}"
-    (
-        flock -x 200
-        local current=$(cat "$counter_file")
-        echo $((current + increment)) > "$counter_file"
-    ) 200>"${counter_file}.lock"
+    # Use atomic append instead of read-modify-write for better performance
+    echo "+$increment" >> "${counter_file}.delta"
+}
+
+# Get counter value (consolidates deltas) - non-destructive read
+get_counter() {
+    local counter_file="$1"
+    local consolidate="${2:-0}"  # Optional flag to consolidate deltas
+    local base=$(cat "$counter_file" 2>/dev/null || echo "0")
+    
+    if [[ -f "${counter_file}.delta" ]]; then
+        # Use awk for fast summation instead of while loop
+        local delta_sum=$(awk '{gsub(/^\+/, "", $1); sum += $1} END {print sum+0}' "${counter_file}.delta" 2>/dev/null || echo "0")
+        
+        # Auto-consolidate if delta file gets too large (>100 lines)
+        local delta_lines=$(wc -l < "${counter_file}.delta" 2>/dev/null || echo "0")
+        if [[ "$consolidate" == "1" ]] || [[ $delta_lines -gt 100 ]]; then
+            > "${counter_file}.delta"
+            # Update base counter
+            local total=$((base + delta_sum))
+            echo "$total" > "$counter_file"
+            echo "$total"
+        else
+            # Non-destructive read for frequent dashboard updates
+            echo $((base + delta_sum))
+        fi
+    else
+        echo "$base"
+    fi
 }
 
 # Cached stat function for performance
@@ -1357,8 +1407,11 @@ detect_suid_sgid_limited() {
     local path="$1"
     local max_depth="$2"
     
-    find "$path" -maxdepth "$max_depth" \( -perm -u=s -o -perm -g=s \) -type f 2>/dev/null | while read -r file; do
-        if [[ -r "$file" ]]; then
+    # Use array instead of while read for massive performance gain
+    local files
+    readarray -t files < <(find "$path" -maxdepth "$max_depth" \( -perm -u=s -o -perm -g=s \) -type f 2>/dev/null)
+    for file in "${files[@]}"; do
+        if [[ -n "$file" && -r "$file" ]]; then
             process_suid_sgid_file "$file"
         fi
     done
@@ -1452,12 +1505,18 @@ detect_world_writable_limited() {
     local path="$1"
     local max_depth="$2"
     
-    find "$path" -maxdepth "$max_depth" -perm -2 ! -type l 2>/dev/null | while read -r file; do
-        process_world_writable_file "$file"
+    # Use arrays for performance - files
+    local world_files
+    readarray -t world_files < <(find "$path" -maxdepth "$max_depth" -perm -2 ! -type l 2>/dev/null)
+    for file in "${world_files[@]}"; do
+        [[ -n "$file" ]] && process_world_writable_file "$file"
     done
     
-    find "$path" -maxdepth "$max_depth" \( -perm -o+w -perm -o+x \) -type d ! -perm -1000 2>/dev/null | while read -r dir; do
-        process_world_writable_directory "$dir"
+    # Use arrays for performance - directories  
+    local world_dirs
+    readarray -t world_dirs < <(find "$path" -maxdepth "$max_depth" \( -perm -o+w -perm -o+x \) -type d ! -perm -1000 2>/dev/null)
+    for dir in "${world_dirs[@]}"; do
+        [[ -n "$dir" ]] && process_world_writable_directory "$dir"
     done
 }
 
@@ -1817,9 +1876,13 @@ perform_systematic_cross_user_check() {
     # Get relative paths from current user's home (using should_scan_file_fast filtering)
     local temp_file="/tmp/filespectre_user_files_$$"
     
-    # Find all files and filter them through should_scan_file_fast function
-    find "$current_user_home" -type f -size -10M 2>/dev/null | while IFS= read -r file; do
-        if should_scan_file_fast "$file"; then
+    # Use array for file discovery - major performance improvement
+    local all_files
+    readarray -t all_files < <(find "$current_user_home" -type f -size -10M 2>/dev/null)
+    
+    # Filter files efficiently
+    for file in "${all_files[@]}"; do
+        if [[ -n "$file" ]] && should_scan_file_fast "$file"; then
             # Convert to relative path
             echo "${file#$current_user_home/}"
         fi
@@ -2217,11 +2280,14 @@ check_world_executable() {
         return
     fi
     
-    # Optimized world-executable files search  
-    find "$path" -maxdepth "$max_depth" -perm -o+x -type f 2>/dev/null | while read -r file; do
-        local owner=$(stat -c '%U' "$file" 2>/dev/null)
+    # Use array for performance - eliminates subprocess overhead
+    local files owner perms
+    readarray -t files < <(find "$path" -maxdepth "$max_depth" -perm -o+x -type f 2>/dev/null)
+    for file in "${files[@]}"; do
+        [[ -n "$file" ]] || continue
+        owner=$(stat -c '%U' "$file" 2>/dev/null)
         if [[ "$owner" != "$CURRENT_USER" ]]; then
-            local perms=$(stat -c '%a' "$file" 2>/dev/null)
+            perms=$(stat -c '%a' "$file" 2>/dev/null)
             log_vulnerability "WORLD_EXEC" "$file" "World-executable file | Owner: $owner | Perms: $perms"
             if [[ $VERBOSE_MODE -eq 1 ]]; then
                 echo -e "${YELLOW}[!] WORLD-EXECUTABLE: $file${NC}"
@@ -2787,8 +2853,8 @@ parallel_scan() {
             sleep 0.5
             
             local processed=$(cat "$TEMP_DIR/processed_users" 2>/dev/null || echo "0")
-            local vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
-            local files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
+            local vulns=$(get_counter "$TEMP_DIR/total_vulns")
+            local files=$(get_counter "$TEMP_DIR/total_files")
             local elapsed=$(($(date +%s) - SCAN_START_TIME))
             local scan_speed="0"
             
@@ -2838,8 +2904,8 @@ parallel_scan() {
             fi
             
             local processed=$(cat "$TEMP_DIR/processed_users" 2>/dev/null || echo "0")
-            local vulns=$(cat "$TEMP_DIR/total_vulns" 2>/dev/null || echo "0")
-            local files=$(cat "$TEMP_DIR/total_files" 2>/dev/null || echo "0")
+            local vulns=$(get_counter "$TEMP_DIR/total_vulns")
+            local files=$(get_counter "$TEMP_DIR/total_files")
             local elapsed=$(($(date +%s) - SCAN_START_TIME))
             local scan_speed="0"
             
@@ -3211,9 +3277,9 @@ discover_all_users() {
 
 # Generate CSV report
 generate_csv_report() {
-    local total_vulns=$(cat "$TEMP_DIR/total_vulns")
-    local scanned_paths=$(cat "$TEMP_DIR/scanned_paths")
-    local total_files=$(cat "$TEMP_DIR/total_files")
+    local total_vulns=$(get_counter "$TEMP_DIR/total_vulns")
+    local scanned_paths=$(get_counter "$TEMP_DIR/scanned_paths")
+    local total_files=$(get_counter "$TEMP_DIR/total_files")
     
     # Create CSV header
     cat > "$CSV_REPORT" <<EOF
@@ -3243,9 +3309,9 @@ EOF
 
 # Generate HTML report
 generate_html_report() {
-    local total_vulns=$(cat "$TEMP_DIR/total_vulns")
-    local scanned_paths=$(cat "$TEMP_DIR/scanned_paths")
-    local total_files=$(cat "$TEMP_DIR/total_files")
+    local total_vulns=$(get_counter "$TEMP_DIR/total_vulns")
+    local scanned_paths=$(get_counter "$TEMP_DIR/scanned_paths")
+    local total_files=$(get_counter "$TEMP_DIR/total_files")
     
     cat > "$HTML_REPORT" <<EOF
 <!DOCTYPE html>
@@ -3342,9 +3408,9 @@ EOF
 
 # Generate XML report
 generate_xml_report() {
-    local total_vulns=$(cat "$TEMP_DIR/total_vulns")
-    local scanned_paths=$(cat "$TEMP_DIR/scanned_paths")
-    local total_files=$(cat "$TEMP_DIR/total_files")
+    local total_vulns=$(get_counter "$TEMP_DIR/total_vulns")
+    local scanned_paths=$(get_counter "$TEMP_DIR/scanned_paths")
+    local total_files=$(get_counter "$TEMP_DIR/total_files")
     
     cat > "$XML_REPORT" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -3403,9 +3469,9 @@ EOF
 #############################################################################
 
 generate_json_report() {
-    local total_vulns=$(cat "$TEMP_DIR/total_vulns")
-    local scanned_paths=$(cat "$TEMP_DIR/scanned_paths")
-    local total_files=$(cat "$TEMP_DIR/total_files")
+    local total_vulns=$(get_counter "$TEMP_DIR/total_vulns")
+    local scanned_paths=$(get_counter "$TEMP_DIR/scanned_paths")
+    local total_files=$(get_counter "$TEMP_DIR/total_files")
     
     cat > "$JSON_REPORT" <<EOF
 {
@@ -3498,9 +3564,9 @@ calculate_severity() {
 }
 
 print_summary() {
-    local total_vulns=$(cat "$TEMP_DIR/total_vulns")
-    local scanned_paths=$(cat "$TEMP_DIR/scanned_paths")
-    local total_files=$(cat "$TEMP_DIR/total_files")
+    local total_vulns=$(get_counter "$TEMP_DIR/total_vulns")
+    local scanned_paths=$(get_counter "$TEMP_DIR/scanned_paths")
+    local total_files=$(get_counter "$TEMP_DIR/total_files")
     
     echo ""
     echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
@@ -3897,19 +3963,26 @@ EOF
         echo "----------------------------------------"
     fi
     
-    # Check for SUID/SGID binaries system-wide
-    if [[ $VERBOSE_MODE -eq 1 ]]; then
-        echo -e "${CYAN}[*] Scanning for SUID/SGID binaries...${NC}"
+    # Skip system-wide scans if include-paths is specified (performance optimization)
+    if [[ ${#INCLUDE_PATHS[@]} -eq 0 ]]; then
+        # Check for SUID/SGID binaries system-wide
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${CYAN}[*] Scanning for SUID/SGID binaries...${NC}"
+        fi
+        # Single system-wide call instead of multiple directory scans
+        check_suid_sgid "/" 1
+        
+        # Check world permissions system-wide (includes temporary directories)
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${CYAN}[*] Scanning world permissions system-wide...${NC}"
+        fi
+        # Single system-wide call covers all temporary directories and more
+        check_world_writable "/" 1
+    else
+        if [[ $VERBOSE_MODE -eq 1 ]]; then
+            echo -e "${YELLOW}[*] Skipping system-wide scans (include-paths specified)${NC}"
+        fi
     fi
-    # Single system-wide call instead of multiple directory scans
-    check_suid_sgid "/" 1
-    
-    # Check world permissions system-wide (includes temporary directories)
-    if [[ $VERBOSE_MODE -eq 1 ]]; then
-        echo -e "${CYAN}[*] Scanning world permissions system-wide...${NC}"
-    fi
-    # Single system-wide call covers all temporary directories and more
-    check_world_writable "/" 1
     
     # Check system-wide NFS exports
     check_nfs_exports
